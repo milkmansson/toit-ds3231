@@ -7,28 +7,26 @@ import mqtt
 import net
 
 /*
-WARNING: To use this program effectively you have to check the comments
-and set the parameters apropriatelly.
-You need an MQTT client like EMQTX or MQTT-Explorer 
+WARNING: To use this program effectively you have to set the
+parameters apropriatelly. You need an MQTT client like EMQTX
+or MQTT-Explorer to see the results.
 
-Automatically applies the offset to the module. Be aware
-that if it is not powered, and you remove the battery
-all settings will be lost.
+The program applies automatically the offset to the module.
+Be aware that whithout power, removing or
+replacing the battery, will reset all settings.
 
-Only a ESP32x (with stable wifi) and DS3231 is needed. ESP modules with lipo socket are
-greatly preferred (To avoid interruptions).
-Typically after after 12-24 h the program applies an aging factor. However the program must
-run again, as rarely the correction eliminates the systematic drift entirelly. After the
+Only a ESP32x (with stable wifi) and DS3231 is needed. ESP modules with lipo socket are preferred (To avoid interruptions).
+Typically after after 12-24 h the program applies an aging factor. However usually, the correction does not eliminate the systematic drift entirelly. After the
 aging factor is applied the module will reset and start again.
 After a few days the process is complete. The good news is you can have many ESP modules
 running in parallel. If you have more than one running modules,
-YOU NEED TO PUT A LABEL WITH THE TOIT name in every ESP module is used for this purpose.
+put a labe with the toit name in every ESP module.
 The MQTT topic contains the IP and it is very easy with "toit scan" to find the correct
 module.
 
-Some values I found are 1.2 0.6 0.2 etc
+Some ppm error values : 1.2 0.6 0.2 etc
 
-Use the SN chips. The MEMS based are not very accurate
+Use the SN chips. The MEMS based are not as accurate.
 
 */
 
@@ -49,9 +47,9 @@ it. If your Internet connection is not stable, no server can help.
 //NTP-SERVER ::= "192.168.5.2"
 
 /*
-Works but it is suboptimal. The ntp error is more than 15ms
+Works but it is suboptimal. The ntp.accuracy is more than 15ms
 (depends on your location) and occasionally 200-500ms !
-Needless to say, more time is required to get acceptable results.
+Of course, more time is required to get acceptable results.
 */
 NTP-SERVER ::= "pool.ntp.org"
 
@@ -79,7 +77,7 @@ CHECK-PERIOD ::= (Duration --m=30)
 /** See the example "ntp-plus-rtc.toit" for various pinout setups */
 // rtc ::= Ds3231 --scl=4 --sda=5 // esp32-c3 luatos core
 // for ESP32 Devkit and lolin32/lite the following is convenient.
-rtc ::=  Ds3231 --sda=33 --scl=32 --vcc=25 --gnd=26
+rtc ::=  Ds3231 --sda=33 --scl=32 --vcc=25 --gnd=26 // the exact reverse is also ok
 
 /**
 The MQTT client object. You can use a private server of course.
@@ -94,18 +92,17 @@ client/mqtt.SimpleClient? := null // main->mqtt-setup does the connection
 // TIMEZONE ::= "EET-2EEST,M3.5.0/3,M10.5.0/4"
 TIMEZONE ::= null // for UTC
 
-/** If the led turns off, you know something happened,
-power outage or program crash. */
+/** The app is running for days, so an indicator is useful */
 
-// lolin32 lite
+// lolin32 lite, buldin LED
 // LED-PIN/int? ::= 22
 // LED-VALUE/int? ::= 0 // active low
 
-// ESP32 devkit
+// ESP32 devkit buldin LED
 // LED-PIN/int? ::= 2
 // LED-VALUE/int? ::= 1 // active high
 
-LED-PIN/int? ::= null // no led indicator
+LED-PIN/int? ::= null // null means no led indicator
 LED-VALUE/int? ::= null
 
 /** END OF CONFIGURATION */
@@ -113,27 +110,20 @@ LED-VALUE/int? ::= null
 TOPIC ::= "rtc/ds3231-$ID/aging-offset-$net.open.address"
 
 main:
-  // it is better the time to be reported as local time
   if TIMEZONE != null:
     set-timezone TIMEZONE
-  //
   if LED-PIN and LED-VALUE:
     p ::= gpio.Pin LED-PIN --output
     p.set LED-VALUE
-  //
   /** sets the system+RTC time from NTP, and returns the accuracy
   of the measurement. */
   ntp-accuracy ::= time-setup
-  //
-  // For TLS connections the time must be correct
+  /** For TLS connections the time must be correct */
   mqtt-setup
-  //
   mqtt-pub "Connected to mqtt"
-  //
-  // We write the time to the DS3231 chip
+  /** We set the time to the DS3231 chip */
   rtc-setup
-  //
-  // running for long enough to find deviation between RTC and NTP
+  /** running for long enough to find deviations between RTC and NTP */
   calulate-drift ntp-accuracy
 
 /** Sets the system time using NTP. Returns the accuracy of the measurement */
@@ -174,7 +164,7 @@ mqtt-setup:
       print "Cannot connect to broker : err = $err"
     sleep --ms=15_000
 
-/** helper function, sends the message to mqtt, handling possible errors */
+/** sends a message to mqtt, handling possible errors */
 mqtt-pub payload/string:
   print payload
   if client==null:
@@ -247,14 +237,14 @@ calulate-drift setup-accuracy:
   "Next Measurement":"$next-measuremet",
   "DS3231 SetupTime accuracy":"$(setup-accuracy.in-ms) ms",
   "NTP accuracy":"$(result.accuracy.in-ms) ms",
-  "Time Keeping Accuracy":"$(%0.1f ppm) ppm",
-  "Accuracy Uncertainty":"+/- $(%0.1f ppm-error) ppm",
+  "Time Keeping Accuracy":"$(%0.2f ppm) ppm",
+  "Accuracy Uncertainty":"+/- $(%0.2f ppm-error) ppm",
   "IP-address":"$net.open.address",
   "Stored Aging Offset":$aging-offset
 }"""
         mqtt-pub msg
 
-        if ( (1.5*ppm-error) < ppm.abs) and (ppm.abs>0.1) and (ppm-error<0.5):
+        if ( (2*ppm-error) < ppm.abs) and (ppm.abs>0.07): // and (ppm-error<0.5):
           write-offset := offs+aging-offset
           try:
             rtc.set-aging-offset write-offset

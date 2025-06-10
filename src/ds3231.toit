@@ -21,7 +21,7 @@ class Ds3231:
   /**
     For direct register read/write
     
-    Use it the library functions are not enough.
+    Use it, if the library does not implement a function.
     In that case you may also consider $set-value-with-mask
   */
   registers/serial.Registers? := null

@@ -4,7 +4,6 @@ src/ds3231.toit.old
 tools/offset-calculator.pk.toit
 tools/package.yaml
 tools/package.lock
-/package.yaml
-/package.lock
-
-package.lock
+tools/diff.pk
+tools/offset-calculator-pk2.toit
+tools/gen-to-pk.diff
