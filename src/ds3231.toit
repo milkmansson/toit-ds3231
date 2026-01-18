@@ -12,15 +12,18 @@ class Ds3231:
   static REG-START_/int ::= 0x00  // The first time (seconds) register is at location 0x00.
   static REG-NUM_/int ::= 7       // and we read 7 consequitive reagisters, until (2-digit) years.
 
+  static REG-ALARM-1-START_/int ::= 0x07  // Alarm 1 has 4 bytes.
+  static REG-ALARM-2-START_/int ::= 0x0B  // Alarm 2 has 3 bytes (drops seconds component).
+
   static REG-AGING_/int ::= 0x10 // The aging register location.
   static REG-TEMPERATURE_/int ::= 0x11 // The temp register location
   static REG-CONTROL_/int ::= 0x0E
   static REG-STATUS_/int ::= 0x0F
-  
+
 
   /**
     For direct register read/write
-    
+
     Use it, if the library does not implement a function.
     In that case you may also consider $set-value-with-mask
   */
@@ -28,7 +31,7 @@ class Ds3231:
 
   /**
   The I2C bus.
-  
+
   Null, if not allocated by this class.
   Kept public in case you want to use another i2c device
   for example the AT24C32 EEPROM (on the blue DS3231 boards)
@@ -133,7 +136,7 @@ class Ds3231:
           break
     /** The time is read just when the seconds register (address 0x00)
     goes to the next second. */
-    rtctime = this.get_ 
+    rtctime = this.get_
     adjustment := Time.now.to rtctime
     if not allow-wrong-time and rtctime.utc.year < 2025:
       throw "DS3231_TIME_IS_INVALID"
@@ -190,9 +193,9 @@ class Ds3231:
     if not -128 <= offset <= 127: throw "INVALID_ARGUMENT"
     registers.write-i8 REG-AGING_ offset
 
-  /** 
+  /**
   Reads the aging offset from the chip.
-  
+
   When first powered it has the value of 0, but if set to a
   different value, it can retain this value as long as it is powered
   or battery backed. */
@@ -226,7 +229,7 @@ class Ds3231:
   /** Equivalent with $enable-sqw-output --frequency=1 */
   enable-sqw-1hz -> none :
     set-sqw_ 0b000_000_00 // RS2->0 RS1->0 INTCN->0
-    
+
 
   /** Equivalent with $enable-sqw-output --frequency=1000 */
   enable-sqw-1kilohz -> none:
@@ -282,7 +285,7 @@ class Ds3231:
   get-temperature -> float :
     /** (4*temp) is stored as 10-bit 2-complement number
     buf[0] the sign + 7 most significant bits
-    buf[1] bits 7 and 8 represent the decimal part 
+    buf[1] bits 7 and 8 represent the decimal part
     the other bits are ignored */
     buf ::= registers.read-bytes REG-TEMPERATURE_ 2
     temp := (buf[0]<<2) | (buf[1]>>6)
@@ -318,7 +321,7 @@ class Ds3231:
           sleep --ms=10
           //print "CONV"
       throw "TIMEOUT_WAITING_CONV"
-   
+
 
   /**
   Returns the expected drift. A Time object must be given
@@ -340,3 +343,193 @@ class Ds3231:
 
   static bcd2int_ x/int -> int:
     return (x / 16) * 10 + (x % 16)
+
+  get-alarm alarm-num/int -> AlarmSpec:
+    assert: 1 <= alarm-num <= 2
+    if alarm-num == 1:
+      return AlarmSpec.from-byte-array (registers.read-bytes REG-ALARM-1-START_ 4)
+    else:
+      return AlarmSpec.from-byte-array (registers.read-bytes REG-ALARM-2-START_ 3)
+
+  set-alarm alarm-num/int alarm/AlarmSpec -> none:
+    assert: 1 <= alarm-num <= 2
+    if alarm == 1:
+      registers.write-bytes REG-ALARM-1-START_ alarm.to-byte-array
+    else:
+      if alarm.must-seconds-match:
+        // Maybe this could send a log, dump the seconds byte, and save it anyway,
+        // but maybe we'd risk weird outcomes like the alarm going every minute?
+        throw "Alarm 2 can not react to an alarm with seconds set."
+      registers.write-bytes REG-ALARM-2-START_ alarm.to-byte-array[1..]
+
+class AlarmSpec:
+  static SECONDS-BYTE_ ::= 0
+  static MINUTES-BYTE_ ::= 1
+  static HOURS-BYTE_   ::= 2
+  static DAY-BYTE_ ::= 3
+  static DEFAULT-ARRAY_ ::= #[0x80, 0x80, 0x80, 0x80]
+
+  payload_/ByteArray := ?
+
+  /**
+  Creates an object from manually supplied data.
+  */
+  constructor
+      --hour/int?=null
+      --minute/int?=null
+      --second/int?=null
+      --day-of-month/int?=null
+      --day-of-week/int?=null:
+    assert: not (day-of-month and day-of-week)
+    assert: if day-of-month: 1 <= day-of-month <= 31
+    assert: if hour: 0 <= hour <= 23
+    assert: if minute: 0 <= minute <= 59
+    assert: if second: 0 <= second <= 59
+    payload_ = DEFAULT-ARRAY_.copy
+
+    if second:
+      payload_[SECONDS-BYTE_] = (payload_[SECONDS-BYTE_] & 0x80) | (encode-field_ second)
+      payload_[SECONDS-BYTE_] = set-must-match_ payload_[SECONDS-BYTE_] --set=true
+
+    if minute:
+      payload_[MINUTES-BYTE_] = (payload_[MINUTES-BYTE_] & 0x80) | (encode-field_ minute)
+      payload_[MINUTES-BYTE_] = set-must-match_ payload_[MINUTES-BYTE_] --set=true
+
+    if hour:
+      payload_[HOURS-BYTE_] = (payload_[HOURS-BYTE_] & 0x80) | (encode-field_ hour)
+      payload_[HOURS-BYTE_] = set-must-match_ payload_[HOURS-BYTE_] --set=true
+
+    if day-of-month or day-of-week:
+      payload_[DAY-BYTE_] = encode-day-field_ --day-of-month=day-of-month --day-of-week=day-of-week
+
+  /**
+  Creates an object from register data.
+  */
+  constructor.from-byte-array bytes/ByteArray:
+    assert: (bytes.size == 3) or (bytes.size == 4)
+    if bytes.size == 4:
+      payload_ = bytes
+    else:
+      payload_ = DEFAULT-ARRAY_[0..1].copy
+      print "**********************Payload is $payload_.size"
+      payload_ += bytes
+
+  must-seconds-match -> bool:
+    return (payload_[SECONDS-BYTE_] & 0x80) == 0
+
+  to-byte-array -> ByteArray:
+    return payload_ //.copy
+
+  must-day-match -> bool:
+    return (payload_[DAY-BYTE_] & 0b1000_0000) == 0
+
+  is-day-of-week -> bool:
+    return (payload_[DAY-BYTE_] & 0b0100_0000) != 0
+
+  day-value -> int:
+    return bcd72int (payload_[DAY-BYTE_] & 0x3F)
+
+  static encode-field_ value/int? -> int:
+    if value == null: return 0x80
+    return int2bcd7 value
+
+  static encode-day-field_ --day-of-month/int? --day-of-week/int? -> int:
+    // If neither is provided, wildcard the day.
+    if not day-of-month and not day-of-week:
+      return 0x80
+
+    if day-of-month != null:
+      // DY/DT = 0, must match => bit7=0
+      v := int2bcd7 day-of-month
+      return (v & 0x3F)  // ensure bits 6-7 are clear
+
+    // day-of-week != null:
+    v := int2bcd7 day-of-week
+    return 0x40 | (v & 0x3F)  // DY/DT=1
+
+  static set-must-match_ value/int --set/bool -> int:
+    if set: return value & 0b0111_1111
+    return value | 0b1000_0000
+
+  static int2bcd7 x/int -> int:
+    //return ((x / 10) << 4) | (x % 10)
+    return (((x / 10) << 4) | (x % 10)) & 0x7F
+
+  static bcd72int x/int -> int:
+    return ((x >> 4) * 10) + (x & 0x0F)
+
+  /**
+  Shortcut returning an Alarmspec for an alarm every second.
+  */
+  static every-second:
+    return AlarmSpec.from-byte-array DEFAULT-ARRAY_
+
+  /**
+  Shortcut returning an Alarmspec for an alarm every minute.
+
+  Note: Alarm 2 can’t match seconds.  Alarms when seconds reach $seconds for
+    Alarm 1, or when seconds=00 for Alarm 2.
+  */
+  static every-minute --seconds/int=0:
+    return AlarmSpec --second=seconds
+
+  /**
+  Shortcut returning an Alarmspec for an alarm hourly.
+
+  Alarm will trigger when minutes and seconds match.  Will trigger on the hour
+    if both are set to 00.
+  */
+  static every-hour --second/int=0 --minute/int=0:
+    return AlarmSpec --minute=minute --second=second
+
+  /**
+  Shortcut returning an Alarmspec for an alarm daily.
+  */
+  static every-day --second/int=0 --minute/int=0 --hour/int=0:
+    return AlarmSpec --hour=hour --minute=minute --second=second
+
+  /**
+  Shortcut returning an Alarmspec for an alarm weekly.
+  */
+  static weekly --day-of-week/int --hour/int=0 --minute/int=0 --second/int=0:
+    return AlarmSpec --day-of-week=day-of-week --hour=hour --minute=minute --second=second
+
+  /**
+  Shortcut returning an Alarmspec for an alarm monthly.
+  */
+  static monthly --day-of-month/int --hour/int=0 --minute/int=0 --second/int=0:
+    return AlarmSpec --day-of-month=day-of-month --hour=hour --minute=minute --second=second
+
+  /* Graveyard:
+
+  seconds -> int:
+    return bcd72int payload_[SECONDS-BYTE_]
+
+  seconds n/int -> none:
+    assert: 0 <= n <= 59
+    payload_[SECONDS-BYTE_] = (payload_[SECONDS-BYTE_] & 0x80) | (int2bcd7 n)
+
+  set-seconds on/bool -> none:
+    payload_[SECONDS-BYTE_] = set-bit7 (not on) payload_[SECONDS-BYTE_]
+
+  minutes -> int:
+    return bcd72int payload_[MINUTES-BYTE_]
+
+  minutes n/int -> none:
+    assert: 0 <= n <= 59
+    payload_[MINUTES-BYTE_] = (payload_[MINUTES-BYTE_] & 0x80) | (int2bcd7 n)
+
+  set-minutes on/bool -> none:
+    payload_[MINUTES-BYTE_] = set-bit7 (not on) payload_[MINUTES-BYTE_]
+
+  is-minutes-set -> bool:
+    return not (is-bit7-set payload_[MINUTES-BYTE_])
+
+  static set-bit7 on/bool x/int -> int:
+    if on: return x | 0b1000_0000
+    return x & 0b0111_1111
+
+  static is-bit7-set x/int -> bool:
+    return (x & 0x80) != 0
+
+  */
