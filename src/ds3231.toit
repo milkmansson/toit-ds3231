@@ -380,8 +380,8 @@ class AlarmSpec:
       --second/int?=null
       --day/int?=null
       --weekly/bool?=null:
-    assert:
-      if weekly: 1 <= day <= 7
+    assert: if weekly != null:
+      if weekly == true: 1 <= day <= 7
       else: 1 <= day <= 31
     assert: if hour: 0 <= hour <= 23
     assert: if minute: 0 <= minute <= 59
@@ -402,9 +402,9 @@ class AlarmSpec:
 
     if weekly != null:
       if weekly:
-        payload_[DAY-BYTE_] = encode-day-field_ --day-of-month=day
-      else:
         payload_[DAY-BYTE_] = encode-day-field_ --day-of-week=day
+      else:
+        payload_[DAY-BYTE_] = encode-day-field_ --day-of-month=day
 
   /**
   Creates an object from register data.
@@ -437,13 +437,13 @@ class AlarmSpec:
     return bcd72int (payload_[DAY-BYTE_] & 0x3F)
 
   hour -> int:
-    return bcd72int payload_[HOURS-BYTE_]
+    return bcd72int (payload_[HOURS-BYTE_] & 0x7F)
 
   minute -> int:
-    return bcd72int payload_[MINUTES-BYTE_]
+    return bcd72int (payload_[MINUTES-BYTE_] & 0x7F)
 
   second -> int:
-    return bcd72int payload_[SECONDS-BYTE_]
+    return bcd72int (payload_[SECONDS-BYTE_] & 0x7F)
 
   /**
   Creates a copy of the object with supplied properties changed.
