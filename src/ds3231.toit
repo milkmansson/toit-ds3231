@@ -359,7 +359,7 @@ class Ds3231:
       if alarm.must-seconds-match:
         // Maybe this could send a log, dump the seconds byte, and save it anyway,
         // but maybe we'd risk weird outcomes like the alarm going every minute?
-        throw "Alarm 2 can not react to an alarm with seconds set."
+        throw "Alarm 2 can not react to seconds set on an alarm."
       registers.write-bytes REG-ALARM-2-START_ alarm.to-byte-array[1..]
 
 class AlarmSpec:
@@ -378,10 +378,11 @@ class AlarmSpec:
       --hour/int?=null
       --minute/int?=null
       --second/int?=null
-      --day-of-month/int?=null
-      --day-of-week/int?=null:
-    assert: not (day-of-month and day-of-week)
-    assert: if day-of-month: 1 <= day-of-month <= 31
+      --day/int?=null
+      --weekly/bool?=null:
+    assert:
+      if weekly: 1 <= day <= 7
+      else: 1 <= day <= 31
     assert: if hour: 0 <= hour <= 23
     assert: if minute: 0 <= minute <= 59
     assert: if second: 0 <= second <= 59
@@ -399,8 +400,11 @@ class AlarmSpec:
       payload_[HOURS-BYTE_] = (payload_[HOURS-BYTE_] & 0x80) | (encode-field_ hour)
       payload_[HOURS-BYTE_] = set-must-match_ payload_[HOURS-BYTE_] --set=true
 
-    if day-of-month or day-of-week:
-      payload_[DAY-BYTE_] = encode-day-field_ --day-of-month=day-of-month --day-of-week=day-of-week
+    if weekly != null:
+      if weekly:
+        payload_[DAY-BYTE_] = encode-day-field_ --day-of-month=day
+      else:
+        payload_[DAY-BYTE_] = encode-day-field_ --day-of-week=day
 
   /**
   Creates an object from register data.
@@ -423,17 +427,46 @@ class AlarmSpec:
   must-day-match -> bool:
     return (payload_[DAY-BYTE_] & 0b1000_0000) == 0
 
-  is-day-of-week -> bool:
+  is-weekly -> bool:
     return (payload_[DAY-BYTE_] & 0b0100_0000) != 0
 
-  day-value -> int:
+  is-monthly -> bool:
+    return (payload_[DAY-BYTE_] & 0b0100_0000) == 0
+
+  day -> int:
     return bcd72int (payload_[DAY-BYTE_] & 0x3F)
+
+  hour -> int:
+    return bcd72int payload_[HOURS-BYTE_]
+
+  minute -> int:
+    return bcd72int payload_[MINUTES-BYTE_]
+
+  second -> int:
+    return bcd72int payload_[SECONDS-BYTE_]
+
+  /**
+  Creates a copy of the object with supplied properties changed.
+  */
+  with -> AlarmSpec
+      --hour/int?=null
+      --minute/int?=null
+      --second/int?=null
+      --day/int?=null
+      --weekly/int?=null:
+
+    return AlarmSpec
+        --hour=(hour or this.hour)
+        --minute=(minute or this.minute)
+        --second=(second or this.second)
+        --day=(day or this.day)
+        --weekly=(weekly or this.is-weekly)
 
   static encode-field_ value/int? -> int:
     if value == null: return 0x80
     return int2bcd7 value
 
-  static encode-day-field_ --day-of-month/int? --day-of-week/int? -> int:
+  static encode-day-field_ --day-of-month/int?=null --day-of-week/int?=null -> int:
     // If neither is provided, wildcard the day.
     if not day-of-month and not day-of-week:
       return 0x80
@@ -492,10 +525,12 @@ class AlarmSpec:
   Shortcut returning an Alarmspec for an alarm weekly.
   */
   static weekly --day-of-week/int --hour/int=0 --minute/int=0 --second/int=0:
-    return AlarmSpec --day-of-week=day-of-week --hour=hour --minute=minute --second=second
+    assert: 1 <= day-of-week <= 7
+    return AlarmSpec --day=day-of-week --weekly=true --hour=hour --minute=minute --second=second
 
   /**
   Shortcut returning an Alarmspec for an alarm monthly.
   */
   static monthly --day-of-month/int --hour/int=0 --minute/int=0 --second/int=0:
-    return AlarmSpec --day-of-month=day-of-month --hour=hour --minute=minute --second=second
+    assert: 1 <= day-of-month <= 31
+    return AlarmSpec --day=day-of-month --weekly=false --hour=hour --minute=minute --second=second
