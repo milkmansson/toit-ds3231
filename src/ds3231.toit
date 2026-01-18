@@ -499,37 +499,3 @@ class AlarmSpec:
   */
   static monthly --day-of-month/int --hour/int=0 --minute/int=0 --second/int=0:
     return AlarmSpec --day-of-month=day-of-month --hour=hour --minute=minute --second=second
-
-  /* Graveyard:
-
-  seconds -> int:
-    return bcd72int payload_[SECONDS-BYTE_]
-
-  seconds n/int -> none:
-    assert: 0 <= n <= 59
-    payload_[SECONDS-BYTE_] = (payload_[SECONDS-BYTE_] & 0x80) | (int2bcd7 n)
-
-  set-seconds on/bool -> none:
-    payload_[SECONDS-BYTE_] = set-bit7 (not on) payload_[SECONDS-BYTE_]
-
-  minutes -> int:
-    return bcd72int payload_[MINUTES-BYTE_]
-
-  minutes n/int -> none:
-    assert: 0 <= n <= 59
-    payload_[MINUTES-BYTE_] = (payload_[MINUTES-BYTE_] & 0x80) | (int2bcd7 n)
-
-  set-minutes on/bool -> none:
-    payload_[MINUTES-BYTE_] = set-bit7 (not on) payload_[MINUTES-BYTE_]
-
-  is-minutes-set -> bool:
-    return not (is-bit7-set payload_[MINUTES-BYTE_])
-
-  static set-bit7 on/bool x/int -> int:
-    if on: return x | 0b1000_0000
-    return x & 0b0111_1111
-
-  static is-bit7-set x/int -> bool:
-    return (x & 0x80) != 0
-
-  */
