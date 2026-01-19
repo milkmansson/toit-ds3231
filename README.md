@@ -7,7 +7,7 @@ hard job. At the moment the library has limited testing and bugs are expected.
 Any help on inmpoving the driver is welcome.
 
 ## Installing + documentation
-See [ds3231 at Toid package registry](https://pkg.toit.io/search?query=ds3231)
+See [ds3231 at Toit package registry](https://pkg.toit.io/search?query=ds3231)
 
 ## Connection
 You need 4 pins:
