@@ -120,8 +120,7 @@ functions: of the 4 properties (hour, minute, second, day) each can be set as
 'every minute at :30 seconds' or 'every day'.
 
 The code has several functions supporting alarms:
-- `get-alarm`: Returns an `AlarmSpec` object, used to store/configure the alarm
-  moment description.
+- `get-alarm`: Returns an `AlarmSpec` object containing the alarm time/moment.
 - `set-alarm`: Takes an `AlarmSpec` and sets either of the alarm slots to the
   alarm time.
 - `set-sqw-as-interrupt`: takes a boolean to either set or unset the SQW pin as
@@ -130,7 +129,7 @@ The code has several functions supporting alarms:
 - `is-alarm-triggered`: returns true when the specified alarm has tripped.
 - `clear-alarm`: clears a raised alarm.  (Will not clear by itself.)
 
-The Alarmspec object is used to describe an alarm time, and store it in a format
+The `AlarmSpec` object is used to describe an alarm time, and store it in a format
 that the DS3231 understands.  It has helpers to set common configurations.
 See the [examples](./examples/).  Printing it will show the outcome of setting
 and enabling the alarm.  If a `AlarmSpec` is configured to the second, but
