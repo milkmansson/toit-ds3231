@@ -59,9 +59,9 @@ All the above are only useful, if you know the wanted accuracy. Some hints:
   the DS3231 is already extremely accurate.
 
 - For projects expecting to be mostly without wifi, the aging correction can be
-  useful, but a 1 minute error per year can still be insignificant 
+  useful, but a 1 minute error per year can still be insignificant
   (irrigation timer comes to mind). See below on how to calculate the aging offset
-  
+
 - For projects really isolated (from the internet) and still requiring high time
   precision, a GNSS module can be a solution (you have to solve other problems of
   course). For Toit there are GNSS drivers, but I have not tested them.
@@ -112,7 +112,28 @@ returns the temperature in °C as a float. Internally is updated every about 1 m
 shows the expected time drift (assuming 2ppm error) since the given time. The real drift is usually smaller. You can set the ppm error.
 
 ## ALARM 1/2
-Not implemented at the moment.
+The DS32321 has two alarm slots, and these can be enabled/disabled independently.
+They differ only in that Alarm 1 has resolution to the second, Alarm 2 has
+resolution to the minute.  Internally, it functions similar to other time
+functions: of the 4 properties (hour, minute, second, day) each can be set as
+'match' or 'ignore'.  This allows some interesting alarm types, including
+'every minute at :30 seconds' or 'every day'.
+
+The code has several functions supporting alarms:
+- `get-alarm`: Returns an `AlarmSpec` object, used to store/configure the alarm
+  moment description.
+- `set-alarm`: Takes an `AlarmSpec` and sets either of the alarm slots to the
+  alarm time.
+- `set-sqw-as-interrupt`: takes a boolean to either set or unset the SQW pin as
+  a GPIO pin alarm interrupt.
+- `enable-alarm`: activates or deactivates either alarm slot.
+- `is-alarm-triggered`: returns true when the specified alarm has tripped.
+- `clear-alarm`: clears a raised alarm.  (Will not clear by itself.)
+
+The Alarmspec object can be used to describe an alarm time.  It has helpers to
+set common configurations.  See the [examples](./examples/).  Printing it will
+show the outcome.
+
 
 ## Aging correction
 

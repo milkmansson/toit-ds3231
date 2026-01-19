@@ -421,6 +421,7 @@ class Ds3231:
     status-reg = status-reg & ~mask
     registers.write-u8 REG-STATUS_ status-reg
 
+
 class AlarmSpec:
   static SECONDS-BYTE_ ::= 0
   static MINUTES-BYTE_ ::= 1
