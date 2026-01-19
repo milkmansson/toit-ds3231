@@ -366,8 +366,6 @@ class Ds3231:
 
   /**
   Sets SQW pin as Interrupt for alarms.
-
-  Clears 
   */
   set-sqw-as-interrupt on/bool -> none:
     control-reg := registers.read-u8 REG-CONTROL_
