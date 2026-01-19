@@ -140,7 +140,7 @@ stored in slot 2, the seconds allocation is dropped but other data still written
 > noncritical in that first, they are not enabled by default.  Second, if they
 > are enabled, the alarm will trigger when the selected digits from the time
 > match.  This would mean that if the data would say 33:00 o'clock, the
-> alarm will simply never trigger.
+> time would never match, and therefore, the alarm will simply never trigger.
 
 ## Aging correction
 
