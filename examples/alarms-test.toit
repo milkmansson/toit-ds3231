@@ -8,6 +8,9 @@ We have an RTC and we wish to program an alarm.
 This method uses a task to watch the alarm trigger register.  Using a pin
 interrupt would be the more common method - in a separate example.
 
+Note that the display shows the system time on the ESP32, not the time on
+the DS3231.
+
 // rtc ::= Ds3231 --scl=7 --sda=6 --vcc=10 --gnd=3 /* esp32-c3 core with GPIO as vcc and gnd */
 // rtc := Ds3231 --sda=25 --scl=26 --vcc=33 --gnd=32 /* Lolin32 lite */
 // rtc := Ds3231 --sda=33 --scl=32 --vcc=25 --gnd=26 /* ESP32 Devkit all versions */
