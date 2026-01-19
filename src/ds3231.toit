@@ -353,7 +353,7 @@ class Ds3231:
 
   set-alarm alarm-num/int alarm/AlarmSpec -> none:
     assert: 1 <= alarm-num <= 2
-    if alarm == 1:
+    if alarm-num == 1:
       registers.write-bytes REG-ALARM-1-START_ alarm.to-byte-array
     else:
       if alarm.must-seconds-match:
@@ -369,6 +369,26 @@ class AlarmSpec:
   static DAY-BYTE_ ::= 3
   static DEFAULT-ARRAY_ ::= #[0x80, 0x80, 0x80, 0x80]
 
+  //In accordance with ISO 8601, the week starts with Monday having the value 1.
+  static UNSET ::= 0
+  static MONDAY ::= 1
+  static TUESDAY ::= 2
+  static WEDNESDAY ::= 3
+  static THURSDAY ::= 4
+  static FRIDAY ::= 5
+  static SATURDAY ::= 6
+  static SUNDAY ::= 7
+  static DAYS_ ::= {
+    UNSET : "UNSET",
+    MONDAY : "Monday",
+    TUESDAY : "Tuesday",
+    WEDNESDAY : "Wednesday",
+    THURSDAY : "Thursday",
+    FRIDAY : "Friday",
+    SATURDAY : "Saturday",
+    SUNDAY : "Sunday",
+  }
+
   payload_/ByteArray := ?
 
   /**
@@ -380,13 +400,14 @@ class AlarmSpec:
       --second/int?=null
       --day/int?=null
       --weekly/bool?=null:
-    assert: if weekly != null:
-      if weekly == true: 1 <= day <= 7
-      else: 1 <= day <= 31
-    assert: if hour: 0 <= hour <= 23
-    assert: if minute: 0 <= minute <= 59
-    assert: if second: 0 <= second <= 59
-    payload_ = DEFAULT-ARRAY_.copy
+    if weekly != null:
+      if weekly == true: assert: 1 <= day <= 7
+      else: assert: 1 <= day <= 31
+    if hour: assert: 0 <= hour <= 23
+    if minute: assert: 0 <= minute <= 59
+    if second: assert:  0 <= second <= 59
+
+    payload_ = DEFAULT-ARRAY_
 
     if second:
       payload_[SECONDS-BYTE_] = (payload_[SECONDS-BYTE_] & 0x80) | (encode-field_ second)
@@ -415,11 +436,28 @@ class AlarmSpec:
       payload_ = bytes
     else:
       payload_ = DEFAULT-ARRAY_[0..1].copy
-      print "**********************Payload is $payload_.size"
       payload_ += bytes
+
+    // Check for byte corruption.  If weird, assume whole byte needs setting
+    // to default.
+    if not (0 <= second <= 59): payload_[SECONDS-BYTE_] = 0x80
+    if not (0 <= minute <= 59): payload_[MINUTES-BYTE_] = 0x80
+    if not (0 <= hour <= 23): payload_[HOURS-BYTE_] = 0x80
+    if is-weekly:
+      if not (1 <= day <= 7):
+        payload_[DAY-BYTE_] = encode-day-field_ --day-of-week=0
+        set-must-match_ payload_[DAY-BYTE_] --set=false
+    else:
+      if not (0 <= day <= 31):
+        payload_[DAY-BYTE_] = encode-day-field_ --day-of-week=0
+        set-must-match_ payload_[DAY-BYTE_] --set=false
 
   must-seconds-match -> bool:
     return (payload_[SECONDS-BYTE_] & 0x80) == 0
+
+  must-match byte/int -> bool:
+    assert: 0 <= byte <= 3
+    return (payload_[byte] & 0x80) == 0
 
   to-byte-array -> ByteArray:
     return payload_ //.copy
@@ -444,6 +482,37 @@ class AlarmSpec:
 
   second -> int:
     return bcd72int (payload_[SECONDS-BYTE_] & 0x7F)
+
+  stringify --debug/bool=false -> string:
+    if debug: return "$payload_"
+    sec-str := (must-match SECONDS-BYTE_) ? "$(%02d second)" : "*"
+    min-str := (must-match MINUTES-BYTE_) ? "$(%02d minute)" : "*"
+    hour-str := (must-match HOURS-BYTE_) ? "$(%02d hour)" : "*"
+    day-str := (must-match DAY-BYTE_) ? "$(%02d day)" : "*"
+    match-sec := must-match SECONDS-BYTE_
+    match-min := must-match MINUTES-BYTE_
+    match-hour := must-match HOURS-BYTE_
+    match-day := must-match DAY-BYTE_
+
+    // Named cases:
+    if not match-sec and not match-min and not match-hour and not match-day:
+      return "every second"
+
+    if match-sec and not match-min and not match-hour and not match-day:
+      return "every minute at :$sec-str"
+
+    if match-sec and match-min and not match-hour and not match-day:
+      return "hourly at :$min-str:$sec-str"
+
+    if match-sec and match-min and match-hour and not match-day:
+      return "daily at $hour-str:$min-str:$sec-str"
+
+    day-type := is-weekly ? "weekly" : "monthly"
+    day-string := is-weekly ? DAYS_[day] : day-str
+    if match-day:
+      return "$day-type on day $day-string at $hour-str:$min-str:$sec-str"
+
+    return "custom at $hour-str:$min-str:$sec-str on day $day-string ($day-type)"
 
   /**
   Creates a copy of the object with supplied properties changed.
