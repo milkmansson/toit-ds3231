@@ -264,7 +264,6 @@ class Ds3231:
     else if frequency == 8000: set-sqw_ 0b000_110_00
     else: throw "INVALID_FREQUENCY"
 
-
   /** Disables the output on the sqw pin. */
   disable-sqw -> none :
     set-sqw_ 0b000_111_00
@@ -358,7 +357,7 @@ class Ds3231:
   /**
   Enables or disables either of the hardware alarms.
   */
-  enable-alarm_ alarm-num/int on/bool -> none:
+  enable-alarm alarm-num/int on/bool -> none:
     assert: 1 <= alarm-num <= 2
     mask := alarm-num == 1 ? ALARM-1-ENABLE_ : ALARM-2-ENABLE_
     control-reg := registers.read-u8 REG-CONTROL_
@@ -367,8 +366,10 @@ class Ds3231:
 
   /**
   Sets SQW pin as Interrupt for alarms.
+
+  Clears 
   */
-  set-int-sqw-as-interrupt on/bool -> none:
+  set-sqw-as-interrupt on/bool -> none:
     control-reg := registers.read-u8 REG-CONTROL_
     control-reg = on ? (control-reg | INTCN-BIT_) : (control-reg & ~INTCN-BIT_)
     registers.write-u8 REG-CONTROL_ control-reg
@@ -398,7 +399,7 @@ class Ds3231:
       if alarm.must-seconds-match:
         // Maybe this could send a log, dump the seconds byte, and save it anyway,
         // but maybe we'd risk weird outcomes like the alarm going every minute?
-        throw "Alarm 2 can not react to seconds set on an alarm."
+        print "Alarm 2 can not react to seconds set on an alarm."
       registers.write-bytes REG-ALARM-2-START_ alarm.to-byte-array[1..]
 
   /**
@@ -467,7 +468,7 @@ class AlarmSpec:
     if minute: assert: 0 <= minute <= 59
     if second: assert:  0 <= second <= 59
 
-    payload_ = DEFAULT-ARRAY_
+    payload_ = DEFAULT-ARRAY_.copy
 
     if second:
       payload_[SECONDS-BYTE_] = (payload_[SECONDS-BYTE_] & 0x80) | (encode-field_ second)

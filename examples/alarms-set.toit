@@ -15,14 +15,17 @@ We have an RTC and we wish to program an alarm.
 rtc ::= Ds3231 --scl=20 --sda=19 /* esp32-c6 DFrobot Beetle */
 
 main:
-  alarm1 := rtc.get-alarm 1
-  alarm2 := rtc.get-alarm 2
-  print "Alarm 1 was: $alarm1 ($(alarm1.stringify --debug))"
-  print "Alarm 2 was: $alarm2 ($(alarm2.stringify --debug))"
+  print
+
+  // Show some ways of creating the alarms
 
   // Create blank alarm object - essentially every second:
   blank := AlarmSpec
   print "Blank alarm is: $blank ($(blank.stringify --debug))"
+
+  // Create hourly alarm object - every time the minute gets to '00':
+  minutely := AlarmSpec.every-minute --seconds=30
+  print "Hourly alarm is: $minutely ($(minutely.stringify --debug))"
 
   // Create hourly alarm object - every time the minute gets to '00':
   hourly := AlarmSpec.every-hour --minute=00
@@ -32,10 +35,17 @@ main:
   daily := AlarmSpec.every-day --hour=12 --minute=00
   print "Daily alarm is: $daily ($(daily.stringify --debug))"
 
-  rtc.set-alarm 1 blank
-  alarm1 = rtc.get-alarm 1
-  print "Alarm 1 is now: $alarm1"
+  // Current configuration:
+  alarm1 := rtc.get-alarm 1
+  alarm2 := rtc.get-alarm 2
+  print "Alarm 1 is: $alarm1"
+  print "Alarm 2 is: $alarm2"
 
+  // Set both to blank:
+  rtc.set-alarm 1 minutely
+  rtc.set-alarm 2 blank
+  print "Alarm 1 now set to: $minutely and Alarm 2 now set to: $blank"
 
-  print "Alarm 1: $alarm1"
-  print "Alarm 2: $alarm2"
+  // Set SQW Pin to Interrupt output:
+  rtc.set-sqw-as-interrupt true
+
