@@ -114,7 +114,7 @@ shows the expected time drift (assuming 2ppm error) since the given time. The re
 ## ALARM 1/2
 The DS32321 has two alarm slots, and these can be enabled/disabled independently.
 They differ only in that Alarm 1 has resolution to the second, Alarm 2 has
-resolution to the minute.  Internally, it functions similar to other time
+resolution only to the minute.  Internally, it functions similar to other time
 functions: of the 4 properties (hour, minute, second, day) each can be set as
 'match' or 'ignore'.  This allows some interesting alarm types, including
 'every minute at :30 seconds' or 'every day'.
@@ -130,10 +130,18 @@ The code has several functions supporting alarms:
 - `is-alarm-triggered`: returns true when the specified alarm has tripped.
 - `clear-alarm`: clears a raised alarm.  (Will not clear by itself.)
 
-The Alarmspec object can be used to describe an alarm time.  It has helpers to
-set common configurations.  See the [examples](./examples/).  Printing it will
-show the outcome.
+The Alarmspec object is used to describe an alarm time, and store it in a format
+that the DS3231 understands.  It has helpers to set common configurations.
+See the [examples](./examples/).  Printing it will show the outcome of setting
+and enabling the alarm.  If a `AlarmSpec` is configured to the second, but
+stored in slot 2, the seconds allocation is dropped but other data still written.
 
+> [!WARNING]
+> Out of the box, corrupt/nonsensical data can be in these registers.  This is
+> noncritical in that first, they are not enabled by default.  Second, if they
+> are enabled, the alarm will trigger when the selected digits from the time
+> match.  This would mean that if the data would say 33:00 o'clock, the
+> alarm will simply never trigger.
 
 ## Aging correction
 
