@@ -129,11 +129,8 @@ The code has several functions supporting alarms:
 - `is-alarm-triggered`: returns true when the specified alarm has tripped.
 - `clear-alarm`: clears a raised alarm.  (Will not clear by itself.)
 
-The `AlarmSpec` object is used to describe an alarm time, and store it in a format
-that the DS3231 understands.  It has helpers to set common configurations.
-See the [examples](./examples/).  Printing it will show the outcome of setting
-and enabling the alarm.  If a `AlarmSpec` is configured to the second, but
-stored in slot 2, the seconds allocation is dropped but other data still written.
+If a `AlarmSpec` is configured to the second, but stored in slot 2, the seconds
+allocation is dropped but other data still written.
 
 > [!WARNING]
 > Out of the box, corrupt/nonsensical data can be in these registers.  This is
@@ -141,6 +138,26 @@ stored in slot 2, the seconds allocation is dropped but other data still written
 > are enabled, the alarm will trigger when the selected digits from the time
 > match.  This would mean that if the data would say 33:00 o'clock, the
 > time would never match, and therefore, the alarm will simply never trigger.
+
+### Using AlarmSpec
+The `AlarmSpec` object is used to describe an alarm time, and store it in a
+format that the DS3231 understands.  The object is designed to be immutable,
+however it does have a `.with` function to create a new object by modifying an
+existing one.  It has helpers to set common configurations. See the
+[examples](./examples/).
+
+
+Printing it will show the outcome of setting and enabling the alarm.  In this
+example, create an 'every-minute' alarm - would raise every time the seconds
+get to '30':
+```Toit
+minutely := AlarmSpec.every-minute --seconds=30
+print "Hourly alarm is: $minutely ($(minutely.stringify --debug))"
+
+// Set alarm in the registers:
+rtc.set-alarm 1 minutely
+print "Alarm 1 now set to: $minutely."
+```
 
 ## Aging correction
 
