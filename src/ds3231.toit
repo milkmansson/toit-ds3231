@@ -12,13 +12,20 @@ class Ds3231:
   static REG-START_/int ::= 0x00  // The first time (seconds) register is at location 0x00.
   static REG-NUM_/int ::= 7       // and we read 7 consequitive reagisters, until (2-digit) years.
 
-  static REG-ALARM-1-START_/int ::= 0x07  // Alarm 1 has 4 bytes.
-  static REG-ALARM-2-START_/int ::= 0x0B  // Alarm 2 has 3 bytes (drops seconds component).
-
   static REG-AGING_/int ::= 0x10 // The aging register location.
   static REG-TEMPERATURE_/int ::= 0x11 // The temp register location
   static REG-CONTROL_/int ::= 0x0E
   static REG-STATUS_/int ::= 0x0F
+
+  // Support for Alarms:
+  static REG-ALARM-1-START_/int ::= 0x07  // Alarm 1 has 4 bytes.
+  static REG-ALARM-2-START_/int ::= 0x0B  // Alarm 2 has 3 bytes (drops seconds component).
+  // Masks for $REG-STATUS_ (alarm tripped) and $REG-CONTROL_ (alarm enabled).
+  static ALARM-1-ENABLE_ ::= 0b0000_0001
+  static ALARM-2-ENABLE_ ::= 0b0000_0010
+  // Mask for $REG-CONTROL_ - set SQW pin as Interrupt.
+  static INTCN-BIT_      ::= 0b0000_0100
+
 
 
   /**
@@ -344,6 +351,31 @@ class Ds3231:
   static bcd2int_ x/int -> int:
     return (x / 16) * 10 + (x % 16)
 
+
+
+
+
+  /**
+  Enables or disables either of the hardware alarms.
+  */
+  enable-alarm_ alarm-num/int on/bool -> none:
+    assert: 1 <= alarm-num <= 2
+    mask := alarm-num == 1 ? ALARM-1-ENABLE_ : ALARM-2-ENABLE_
+    control-reg := registers.read-u8 REG-CONTROL_
+    control-reg = on ? (control-reg | mask) : (control-reg & ~mask)
+    registers.write-u8 REG-CONTROL_ control-reg
+
+  /**
+  Sets SQW pin as Interrupt for alarms.
+  */
+  set-int-sqw-as-interrupt on/bool -> none:
+    control-reg := registers.read-u8 REG-CONTROL_
+    control-reg = on ? (control-reg | INTCN-BIT_) : (control-reg & ~INTCN-BIT_)
+    registers.write-u8 REG-CONTROL_ control-reg
+
+  /**
+  Gets one of the two hardware alarms.  Returns an `AlarmSpec`.
+  */
   get-alarm alarm-num/int -> AlarmSpec:
     assert: 1 <= alarm-num <= 2
     if alarm-num == 1:
@@ -351,8 +383,15 @@ class Ds3231:
     else:
       return AlarmSpec.from-byte-array (registers.read-bytes REG-ALARM-2-START_ 3)
 
+  /**
+  Sets one of the two hardware alarms.  Requires an `AlarmSpec`.
+  */
   set-alarm alarm-num/int alarm/AlarmSpec -> none:
     assert: 1 <= alarm-num <= 2
+    // See if Register 0x03h is 00.  If so, and alarm.is-weekly is true,
+    // alarm will never trigger.
+
+    // Set the alarm:
     if alarm-num == 1:
       registers.write-bytes REG-ALARM-1-START_ alarm.to-byte-array
     else:
@@ -362,10 +401,31 @@ class Ds3231:
         throw "Alarm 2 can not react to seconds set on an alarm."
       registers.write-bytes REG-ALARM-2-START_ alarm.to-byte-array[1..]
 
+  /**
+  Whether an alarm has been triggered.
+  */
+  is-alarm-triggered alarm-num/int -> bool:
+    assert: 1 <= alarm-num <= 2
+    mask := alarm-num == 1 ? ALARM-1-ENABLE_ : ALARM-2-ENABLE_
+    status := registers.read-u8 REG-STATUS_
+    return (status & mask) != 0
+
+  /**
+  Clears a raised alarm.
+
+  Alarms must be cleared in Software.
+  */
+  clear-alarm alarm-num/int -> none:
+    assert: 1 <= alarm-num <= 2
+    mask := alarm-num == 1 ? ALARM-1-ENABLE_ : ALARM-2-ENABLE_
+    status-reg := registers.read-u8 REG-STATUS_
+    status-reg = status-reg & ~mask
+    registers.write-u8 REG-STATUS_ status-reg
+
 class AlarmSpec:
   static SECONDS-BYTE_ ::= 0
   static MINUTES-BYTE_ ::= 1
-  static HOURS-BYTE_   ::= 2
+  static HOURS-BYTE_ ::= 2
   static DAY-BYTE_ ::= 3
   static DEFAULT-ARRAY_ ::= #[0x80, 0x80, 0x80, 0x80]
 
@@ -488,7 +548,6 @@ class AlarmSpec:
     sec-str := (must-match SECONDS-BYTE_) ? "$(%02d second)" : "*"
     min-str := (must-match MINUTES-BYTE_) ? "$(%02d minute)" : "*"
     hour-str := (must-match HOURS-BYTE_) ? "$(%02d hour)" : "*"
-    day-str := (must-match DAY-BYTE_) ? "$(%02d day)" : "*"
     match-sec := must-match SECONDS-BYTE_
     match-min := must-match MINUTES-BYTE_
     match-hour := must-match HOURS-BYTE_
@@ -508,11 +567,12 @@ class AlarmSpec:
       return "daily at $hour-str:$min-str:$sec-str"
 
     day-type := is-weekly ? "weekly" : "monthly"
-    day-string := is-weekly ? DAYS_[day] : day-str
+    day-str := (must-match DAY-BYTE_) ? "$(%02d day)" : "*"
+    day-display := is-weekly ? DAYS_[day] : day-str
     if match-day:
-      return "$day-type on day $day-string at $hour-str:$min-str:$sec-str"
+      return "$day-type on day $day-display at $hour-str:$min-str:$sec-str"
 
-    return "custom at $hour-str:$min-str:$sec-str on day $day-string ($day-type)"
+    return "custom at $hour-str:$min-str:$sec-str on day $day-display ($day-type)"
 
   /**
   Creates a copy of the object with supplied properties changed.
