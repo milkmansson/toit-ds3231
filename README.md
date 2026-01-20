@@ -7,7 +7,7 @@ hard job. At the moment the library has limited testing and bugs are expected.
 Any help on inmpoving the driver is welcome.
 
 ## Installing + documentation
-See [ds3231 at Toid package registry](https://pkg.toit.io/search?query=ds3231)
+See [ds3231 at Toit package registry](https://pkg.toit.io/search?query=ds3231)
 
 ## Connection
 You need 4 pins:
@@ -59,9 +59,9 @@ All the above are only useful, if you know the wanted accuracy. Some hints:
   the DS3231 is already extremely accurate.
 
 - For projects expecting to be mostly without wifi, the aging correction can be
-  useful, but a 1 minute error per year can still be insignificant 
+  useful, but a 1 minute error per year can still be insignificant
   (irrigation timer comes to mind). See below on how to calculate the aging offset
-  
+
 - For projects really isolated (from the internet) and still requiring high time
   precision, a GNSS module can be a solution (you have to solve other problems of
   course). For Toit there are GNSS drivers, but I have not tested them.
@@ -112,7 +112,52 @@ returns the temperature in °C as a float. Internally is updated every about 1 m
 shows the expected time drift (assuming 2ppm error) since the given time. The real drift is usually smaller. You can set the ppm error.
 
 ## ALARM 1/2
-Not implemented at the moment.
+The DS32321 has two alarm slots, and these can be enabled/disabled independently.
+They differ only in that Alarm 1 has resolution to the second, Alarm 2 has
+resolution only to the minute.  Internally, it functions similar to other time
+functions: of the 4 properties (hour, minute, second, day) each can be set as
+'match' or 'ignore'.  This allows some interesting alarm types, including
+'every minute at :30 seconds' or 'every day'.
+
+The code has several functions supporting alarms:
+- `get-alarm`: Returns an `AlarmSpec` object containing the alarm time/moment.
+- `set-alarm`: Takes an `AlarmSpec` and sets either of the alarm slots to the
+  alarm time.
+- `set-sqw-as-interrupt`: takes a boolean to either set or unset the SQW pin as
+  a GPIO pin alarm interrupt.
+- `enable-alarm`: activates or deactivates either alarm slot.
+- `is-alarm-triggered`: returns true when the specified alarm has tripped.
+- `clear-alarm`: clears a raised alarm.  (Will not clear by itself.)
+
+If a `AlarmSpec` is configured to the second, but stored in slot 2, the seconds
+allocation is dropped but other data still written.
+
+> [!WARNING]
+> Out of the box, corrupt/nonsensical data can be in these registers.  This is
+> noncritical in that first, they are not enabled by default.  Second, if they
+> are enabled, the alarm will trigger when the selected digits from the time
+> match.  This would mean that if the data would say 33:00 o'clock, the
+> time would never match, and therefore, the alarm will simply never trigger.
+
+### Using AlarmSpec
+The `AlarmSpec` object is used to describe an alarm time, and store it in a
+format that the DS3231 understands.  The object is designed to be immutable,
+however it does have a `.with` function to create a new object by modifying an
+existing one.  It has helpers to set common configurations. See the
+[examples](./examples/).
+
+
+Printing it will show the outcome of setting and enabling the alarm.  In this
+example, create an 'every-minute' alarm - would raise every time the seconds
+get to '30':
+```Toit
+minutely := AlarmSpec.every-minute --seconds=30
+print "Hourly alarm is: $minutely ($(minutely.stringify --debug))"
+
+// Set alarm in the registers:
+rtc.set-alarm 1 minutely
+print "Alarm 1 now set to: $minutely."
+```
 
 ## Aging correction
 
