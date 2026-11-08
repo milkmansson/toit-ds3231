@@ -4,15 +4,13 @@ import ds3231 show *
 Scenario:
 
 We have an RTC and we wish to program an alarm.
-
-// rtc ::= Ds3231 --scl=7 --sda=6 --vcc=10 --gnd=3 /* esp32-c3 core with GPIO as vcc and gnd */
-// rtc := Ds3231 --sda=25 --scl=26 --vcc=33 --gnd=32 /* Lolin32 lite */
-// rtc := Ds3231 --sda=33 --scl=32 --vcc=25 --gnd=26 /* ESP32 Devkit all versions */
-// rtc := Ds3231 --sda=35 --scl=36 --vcc=37 --gnd=38 /* S3 devkitC abudance of pins here */
-
 */
 
-rtc ::= Ds3231 --scl=20 --sda=19 /* esp32-c6 DFrobot Beetle */
+// Wiring for the DFRobot FireBeetle 2 ESP32-C6. See the README for other boards.
+SDA-PIN ::= 19
+SCL-PIN ::= 20
+
+rtc ::= Ds3231 --sda=SDA-PIN --scl=SCL-PIN
 
 main:
   print
@@ -23,9 +21,9 @@ main:
   blank := AlarmSpec
   print "Blank alarm is: $blank ($(blank.stringify --debug))"
 
-  // Create hourly alarm object - every time the minute gets to '00':
+  // Create minutely alarm object - every time the seconds get to '30':
   minutely := AlarmSpec.every-minute --seconds=30
-  print "Hourly alarm is: $minutely ($(minutely.stringify --debug))"
+  print "Minutely alarm is: $minutely ($(minutely.stringify --debug))"
 
   // Create hourly alarm object - every time the minute gets to '00':
   hourly := AlarmSpec.every-hour --minute=00
@@ -41,7 +39,7 @@ main:
   print "Alarm 1 is: $alarm1"
   print "Alarm 2 is: $alarm2"
 
-  // Set both to blank:
+  // Set alarm 1 to the minutely alarm, and alarm 2 to the blank alarm:
   rtc.set-alarm 1 minutely
   rtc.set-alarm 2 blank
   print "Alarm 1 now set to: $minutely and Alarm 2 now set to: $blank"

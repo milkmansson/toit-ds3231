@@ -41,8 +41,8 @@ Use a LAN NTP server if you have one
 I use "chrony" on a debian server mini pc (with ethernet connection).
 The buildin NTP server of openwrt does not seem to have millisecond
 accuracy, which is logical (I am not blaming openwrt here) and should
-not be used. The chrony is available for openwrt but I have not tested
-it. If your Internet connection is not stable, no server can help.
+not be used. The chrony is available for openwrt.
+If your Internet connection is not stable, no server can help.
 */
 //NTP-SERVER ::= "192.168.5.2"
 
@@ -75,9 +75,12 @@ NTP-ERROR-MAX-SETUP := NTP-ERROR-MAX
 CHECK-PERIOD ::= (Duration --m=30)
 
 /** See the example "ntp-plus-rtc.toit" for various pinout setups */
-// rtc ::= Ds3231 --scl=4 --sda=5 // esp32-c3 luatos core
-// for ESP32 Devkit and lolin32/lite the following is convenient.
-rtc ::=  Ds3231 --sda=33 --scl=32 --vcc=25 --gnd=26 // the exact reverse is also ok
+// Wiring for an ESP32 Devkit or lolin32 lite. The vcc and gnd can be swapped.
+SDA-PIN ::= 33
+SCL-PIN ::= 32
+VCC-PIN ::= 25
+GND-PIN ::= 26
+rtc ::= Ds3231 --sda=SDA-PIN --scl=SCL-PIN --vcc=VCC-PIN --gnd=GND-PIN
 
 /**
 The MQTT client object. You can use a private server of course.
@@ -124,11 +127,11 @@ main:
   /** We set the time to the DS3231 chip */
   rtc-setup
   /** running for long enough to find deviations between RTC and NTP */
-  calulate-drift ntp-accuracy
+  calculate-drift ntp-accuracy
 
 /** Sets the system time using NTP. Returns the accuracy of the measurement */
 time-setup -> Duration:
-  coundown := 4
+  countdown := 4
   while true:
     result := ntp.synchronize --server=NTP-SERVER
     if result:
@@ -138,8 +141,8 @@ time-setup -> Duration:
         return result.accuracy
       else:
         print "The accuracy of ntp is bad : $result.accuracy"
-        if coundown>0:
-          coundown--
+        if countdown>0:
+          countdown--
         else:
           print "Increasing the error tolerance my 1ms"
           NTP-ERROR-MAX-SETUP += (Duration --ms=1)
@@ -186,14 +189,14 @@ rtc-setup:
   try:
     adj := rtc.get
     print "The rtc has diff $adj from system time"
-    // TODO the adj can be used to finetune the final accuracy
+    // The adj can be used to finetune the final accuracy
   finally: | is-exception _ |
     if is-exception:
       mqtt-pub "ERROR reading the RTC"
   
 
 /** Endless loop, as time passes the difference between NTP and RTC grows */
-calulate-drift setup-accuracy:
+calculate-drift setup-accuracy:
   start-time := Time.now
   mqtt-pub """
   \nWARNING: the first few measurements are worthless, but we

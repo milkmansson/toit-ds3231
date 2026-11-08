@@ -1,10 +1,9 @@
 # Ds3231
 [Toit](https://toitlang.org/) driver for the DS3231 real time clock.
 
-## Warning
+## Contributing
 Working with time, especially if there are constraints on the accuracy, is a
-hard job. At the moment the library has limited testing and bugs are expected.
-Any help on inmpoving the driver is welcome.
+hard job. Any help on improving the driver is welcome.
 
 ## Installing + documentation
 See [ds3231 at Toit package registry](https://pkg.toit.io/search?query=ds3231)
@@ -14,7 +13,21 @@ You need 4 pins:
 
 > SCL SDA VCC GND
 
-The popular blue DS3231 boards (check the documentation for your board) do not
+The pins are passed to the constructor as GPIO numbers, for example
+`Ds3231 --sda=19 --scl=20` for the DFRobot FireBeetle 2 ESP32-C6 used in the
+examples. Other boards need other pins. Some common choices:
+
+| Board | SDA | SCL | VCC | GND |
+|-------|-----|-----|-----|-----|
+| DFRobot FireBeetle 2 ESP32-C6 | 19 | 20 | | |
+| ESP32-C3 core with GPIO as VCC and GND | 6 | 7 | 10 | 3 |
+| ESP32-C3 LuatOS core | 5 | 4 | | |
+| Lolin32 lite | 25 | 26 | 33 | 32 |
+| ESP32 DevKit (all versions) | 33 | 32 | 25 | 26 |
+| ESP32-S3 DevKitC | 35 | 36 | 37 | 38 |
+
+Check the documentation of your board, and avoid strapping and special purpose
+pins. The popular blue DS3231 boards (check the documentation for your board) do not
 have level conversion circuitry. So the VCC pin should be connected to 3.3V.
 The breakout consumes minimal current, and you can use GPIO pins for the VCC and
 GND. See the examples.
@@ -23,10 +36,10 @@ GND. See the examples.
 Note: This section applies to the popular blue DS3231 breakout board, with the
 primitive diode charging circuit.
 
-Use a good CR2032 coin cell. Some internet sources mention LIR2032 (rechargable)
-but with 3.3V (see the above paragraph) the rechargable cell cannot be charged
+Use a good CR2032 coin cell. Some internet sources mention LIR2032 (rechargeable)
+but with 3.3V (see the above paragraph) the rechargeable cell cannot be charged
 at all, making the module unusable. The CR2032 is safe with 3.3V for the same
-reason the LIR2032 canot be charged (No reverse current, as the diode has a voltage
+reason the LIR2032 cannot be charged (No reverse current, as the diode has a voltage
  drop ~0.7 Volt). You can remove the diode as many sources mention, but it is
  not necessary if you power the module with 3.3V only.
 
@@ -64,7 +77,7 @@ All the above are only useful, if you know the wanted accuracy. Some hints:
 
 - For projects really isolated (from the internet) and still requiring high time
   precision, a GNSS module can be a solution (you have to solve other problems of
-  course). For Toit there are GNSS drivers, but I have not tested them.
+  course). For Toit there are GNSS drivers.
   I have created such a
   [GNSS time driver for tasmota](https://github.com/pkarsy/TasmotaBerryTime/tree/main/ds3231)
   if you are interested.
@@ -76,9 +89,17 @@ All the above are only useful, if you know the wanted accuracy. Some hints:
 
 ## Constructor
 You can create the driver instance in 2 ways.
-- Create the i2c bus object first, and then pass it to the constructor.
+- Create the i2c bus and device first, and pass the device to the constructor
+  (`Ds3231 (bus.device Ds3231.I2C-ADDRESS)`). Use this when other devices share the bus.
 - If the DS3231 is the only i2c device in the bus (most common case) you
-  can simply pass the pin numbers to the constructor.
+  can simply pass the pin numbers to the constructor. The driver then creates
+  and owns the bus, and `close` releases it.
+
+## Time errors
+`get` throws `DS3231_NOT_TICKING` when the seconds do not advance (stopped
+oscillator), and `DS3231_TIME_IS_INVALID` when the chip time is before 2025,
+unless `--allow-wrong-time` is given. `set` does not clear the oscillator
+stopped flag. Call `clear-oscillator-stopped` afterwards.
 
 ## Setting and getting the time
 This library, just like the ntp library, uses time-adjustment instead of absolute
@@ -86,7 +107,7 @@ time. This is a clever way to set the time correctly, even if there is a time ga
 between time-get (for instance from NTP) and time-set (to the DS3231)
 
 ## SQW pin
-The library does not use/need this pin by itself, but you may find it usefull
+The library does not use/need this pin by itself, but you may find it useful
 for other purposes, as interrupt source etc. The following functions can
 control the SQW output.
 
@@ -97,14 +118,20 @@ enable-battery-backed-sqw
 disable-battery-backed-sqw
 ```
 
-DS3232 will retain the register settings as long as the module is active or
+The DS3231 retains the register settings as long as the module is active or
 is battery backed.
+
+The frequencies passed to `enable-sqw-output` are 1, 1000, 4000 and 8000.
+The chip generates 1 Hz, 1.024 kHz, 4.096 kHz and 8.192 kHz. `disable-sqw`
+sets the pin to alarm interrupt mode, so it only toggles for enabled alarms.
 
 ## Temperature
 > get-temperature
 
-returns the temperature in °C as a float. Internally is updated every about 1 min (SN model). However you can force a temperature conversion with
+returns the temperature in °C as a float. Internally it is updated about every 64 seconds. You can force a temperature conversion with
 > force-temp-conversion
+
+A conversion takes up to about 200 ms. The datasheet accuracy is ±3 °C.
 
 ## Clock drift
 > expected-drift
@@ -112,7 +139,7 @@ returns the temperature in °C as a float. Internally is updated every about 1 m
 shows the expected time drift (assuming 2ppm error) since the given time. The real drift is usually smaller. You can set the ppm error.
 
 ## ALARM 1/2
-The DS32321 has two alarm slots, and these can be enabled/disabled independently.
+The DS3231 has two alarm slots, and these can be enabled/disabled independently.
 They differ only in that Alarm 1 has resolution to the second, Alarm 2 has
 resolution only to the minute.  Internally, it functions similar to other time
 functions: of the 4 properties (hour, minute, second, day) each can be set as
@@ -129,8 +156,9 @@ The code has several functions supporting alarms:
 - `is-alarm-triggered`: returns true when the specified alarm has tripped.
 - `clear-alarm`: clears a raised alarm.  (Will not clear by itself.)
 
-If a `AlarmSpec` is configured to the second, but stored in slot 2, the seconds
-allocation is dropped but other data still written.
+If an `AlarmSpec` is configured to the second, but stored in slot 2, the seconds
+are ignored and the alarm triggers when the seconds of the time are 00. The
+other fields are written.
 
 > [!WARNING]
 > Out of the box, corrupt/nonsensical data can be in these registers.  This is
@@ -141,9 +169,10 @@ allocation is dropped but other data still written.
 
 ### Using AlarmSpec
 The `AlarmSpec` object is used to describe an alarm time, and store it in a
-format that the DS3231 understands.  The object is designed to be immutable,
-however it does have a `.with` function to create a new object by modifying an
-existing one.  It has helpers to set common configurations. See the
+format that the DS3231 understands.  The object is immutable.
+The `.with` function creates a new object by modifying an existing one. Fields
+that are not given keep their value, including being ignored. To set the day of
+an alarm that ignores the day, give `--weekly` as well as `--day`.  It has helpers to set common configurations. See the
 [examples](./examples/).
 
 
@@ -163,7 +192,7 @@ print "Alarm 1 now set to: $minutely."
 
 > set-aging-offset
 
-Can get a value from -128 up to 127 to make the clock more accurate (significantly less than 2ppm).
+Takes a value from -128 up to 127 to make the clock more accurate (significantly less than 2ppm).
 - inside tools there is the **offset-calculator.toit** program. The hardware setup is minimal a
   ESP32x and a Ds3231 module. It is very slow, but you can use
   multiple modules in parallel.
@@ -184,7 +213,7 @@ whether the RTC time is still valid on boot without any additional hardware.
 
 `oscillator-stopped` reads this flag and returns true if the oscillator has
 stopped since it was last cleared. `clear-oscillator-stopped` resets the flag
-which must be run manualy once the condition has been handled — typically after
+which must be run manually once the condition has been handled — typically after
 resyncing the time from NTP or another trusted source.  An example of this is
 in `osf.toit` in the [examples](./examples/) folder.
 

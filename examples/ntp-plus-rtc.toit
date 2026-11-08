@@ -4,57 +4,53 @@ import ntp
 
 /*
 Scenario:
-we have both wifi and DS3231 and we want the RTC
-for the periods the WIFI is anavailable
+We have both wifi and DS3231 and we want the RTC
+for the periods the WIFI is unavailable.
 
-If the bus is shared between more than one i2c devices we need to create the bus ourselves
-bus := i2c.Bus --sda=(gpio.Pin 25) --scl=(gpio.Pin 26)
-device := bus.device ds3231.I2C-DEFAULT
-rtc := ds3231 device
+If the DS3231 is the only device on the i2c bus, the constructor below creates
+the bus. Leave out --vcc and --gnd if the module is wired to real VCC and GND pins.
+They can be GPIO pins (the module needs only about 4mA). That is useful for easy
+cabling, and for battery powered projects (the ESP32 sleep turns off the DS3231):
 
-You can use GPIO pins as GND and VCC (only 4mA)
-This is useful for easy cabling, and for battery powered projects (the ESP32 sleep turns off the DS3231)
+  rtc ::= Ds3231 --sda=SDA-PIN --scl=SCL-PIN --vcc=33 --gnd=32
 
-gnd := gpio.Pin 32 --output --value=0
-vcc := gpio.Pin 33 --output --value=1
+If the bus is shared between more than one i2c device, create the bus
+and pass the device:
 
-If the clock is the only device in the bus, all the above
-setup can be simplified with the following constructor
-if you are true hardware VCC and GND pins, leave the --vcc and --gnd out.
+  bus := i2c.Bus --sda=SDA-PIN --scl=SCL-PIN
+  rtc := Ds3231 (bus.device Ds3231.I2C-ADDRESS)
 
-The following configurations are for convenience (the pins are in the same order)
-you are free to use any pin that is allowed by the board or the ESP chip.
-Read the board's documentation on the pins you can use. Straping and special purpose pins
-should be avoided.
-
-// rtc ::= Ds3231 --scl=7 --sda=6 --vcc=10 --gnd=3 /* esp32-c3 core with GPIO as vcc and gnd */
-// rtc := Ds3231 --sda=25 --scl=26 --vcc=33 --gnd=32 /* Lolin32 lite */
-// rtc := Ds3231 --sda=33 --scl=32 --vcc=25 --gnd=26 /* ESP32 Devkit all versions */
-// rtc := Ds3231 --sda=35 --scl=36 --vcc=37 --gnd=38 /* S3 devkitC abudance of pins here */
-
+Read the board's documentation on the pins you can use. Strapping and special
+purpose pins should be avoided.
 */
-rtc ::= Ds3231 --scl=4 --sda=5 /* esp32-c3 luatos core (with or without serial chip) */
+
+// Wiring for the DFRobot FireBeetle 2 ESP32-C6. See the README for other boards.
+SDA-PIN ::= 19
+SCL-PIN ::= 20
+
+rtc ::= Ds3231 --sda=SDA-PIN --scl=SCL-PIN
 
 main:
   task:: update-time // This task is doing the time sync
   task:: check-time-sync // for debugging
   //task:: check-get-set-accuracy // for debugging
-  //task :: my-project
+  //task:: my-project
 
 // This task is using the most appropriate time source :
 // If internet is working, it uses NTP (and updates the RTC),
 // and when NTP is not available, it uses DS3231 as a backup
 update-time:
   last-ntp-time/Time? := null
-  if true:
-    // The RTC is available before Wifi+NTP and sets the time first
-    adjustment := rtc.get
-    //if rtc-result.adjustment:
-    now := Time.now + adjustment
-    adjust_real_time_clock adjustment
-    print "Got system time from RTC : $now"
-    //else:
-    //  print "Cannot get the RTC time : $rtc-result.error"
+  // The RTC is available before Wifi+NTP and sets the time first. It has no
+  // valid time after a power loss (oscillator stopped), then we wait for NTP.
+  if rtc.oscillator-stopped:
+    print "The RTC lost its time, waiting for NTP"
+  else:
+    error := catch:
+      adjustment := rtc.get
+      adjust_real_time_clock adjustment
+      print "Got system time from RTC : $(Time.now + adjustment)"
+    if error: print "Cannot use the RTC time : $error"
   while true:
     result := ntp.synchronize // --max-rtt=(Duration --ms=500)  --server="pool.ntp.org"
     if result:
@@ -64,7 +60,8 @@ update-time:
           sleep (Duration --m=1)
           continue
       last-ntp-time = Time.now + result.adjustment
-      rtc.set result.adjustment //--adjustment=result.adjustment
+      rtc.set result.adjustment
+      rtc.clear-oscillator-stopped
       adjust_real_time_clock result.adjustment // The time will be corrected gradually
       print "Setting the RTC time using the NTP time"
       print "NTP sync done adjustment=$result.adjustment acc=$result.accuracy"
@@ -80,10 +77,14 @@ check-time-sync: // for debugging purposes
     ntp-result := ntp.synchronize // --server="your local server IP but usually not needed"
     if ntp-result:
       print "[TEST-START] NTP-time - System-time : $ntp-result.adjustment accuracy=$ntp-result.accuracy"
-    adjustment := rtc.get
-    print "[TEST      ] RTC-time - System-time : $adjustment. Possible RTC drift : $(rtc.expected-drift --from-time=Time.now)"
-    if ntp-result:
-      print "[TEST-END  ] NTP-time - RTC-time    : $(ntp-result.adjustment - adjustment)"
+    adjustment/Duration? := null
+    error := catch: adjustment = rtc.get
+    if error:
+      print "[TEST      ] Cannot read the RTC : $error"
+    else:
+      print "[TEST      ] RTC-time - System-time : $adjustment. Possible RTC drift : $(rtc.expected-drift --from-time=Time.now)"
+      if ntp-result:
+        print "[TEST-END  ] NTP-time - RTC-time    : $(ntp-result.adjustment - adjustment)"
     sleep --ms=30_000
 
 check-get-set-accuracy:
@@ -92,8 +93,8 @@ check-get-set-accuracy:
   while true:
     print "We set the RTC time $Time.now"
     rtc.set (Duration 0)
-    sleep --ms = 1500
-    print "We get it aggain"
+    sleep --ms=1500
+    print "We get it again"
     adjustment := rtc.get
     print "Difference is $adjustment"
     sleep --ms=4500

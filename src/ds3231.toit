@@ -6,63 +6,69 @@ import serial
 Driver for the DS3231 Real Time Clock.
 */
 class Ds3231:
-  /** The i2c adress of the DS3231 is 0x68 and cannot be changed */
+  /** The i2c address of the DS3231. It is fixed and cannot be changed. */
   static I2C-ADDRESS/int ::= 0x68
 
   static REG-START_/int ::= 0x00  // The first time (seconds) register is at location 0x00.
-  static REG-NUM_/int ::= 7       // and we read 7 consequitive reagisters, until (2-digit) years.
+  static REG-NUM_/int ::= 7       // We read 7 consecutive registers, up to the (2-digit) year.
 
-  static REG-AGING_/int ::= 0x10 // The aging register location.
-  static REG-TEMPERATURE_/int ::= 0x11 // The temp register location
   static REG-CONTROL_/int ::= 0x0E
   static REG-STATUS_/int ::= 0x0F
+  static REG-AGING_/int ::= 0x10
+  static REG-TEMPERATURE_/int ::= 0x11
+
+  // Bits of $REG-CONTROL_.
+  static CONV-BIT_/int ::= 0b0010_0000   // Start a temperature conversion.
+  static BBSQW-BIT_/int ::= 0b0100_0000  // Battery-backed square wave.
+  static INTCN-BIT_/int ::= 0b0000_0100  // SQW pin signals alarms instead of a square wave.
+  static SQW-MASK_/int ::= 0b0001_1100   // RS2, RS1 and INTCN.
+
+  // Bits of $REG-STATUS_.
+  static OSF-BIT_/int ::= 0b1000_0000  // Oscillator stopped.
+  static BSY-BIT_/int ::= 0b0000_0100  // Temperature conversion in progress.
 
   // Support for Alarms:
   static REG-ALARM-1-START_/int ::= 0x07  // Alarm 1 has 4 bytes.
   static REG-ALARM-2-START_/int ::= 0x0B  // Alarm 2 has 3 bytes (drops seconds component).
   // Masks for $REG-STATUS_ (alarm tripped) and $REG-CONTROL_ (alarm enabled).
-  static ALARM-1-ENABLE_ ::= 0b0000_0001
-  static ALARM-2-ENABLE_ ::= 0b0000_0010
-  // Mask for $REG-CONTROL_ - set SQW pin as Interrupt.
-  static INTCN-BIT_      ::= 0b0000_0100
+  static ALARM-1-BIT_/int ::= 0b0000_0001
+  static ALARM-2-BIT_/int ::= 0b0000_0010
 
-
+  /** The oldest year that $get and $set accept, unless told otherwise. */
+  static MIN-VALID-YEAR_/int ::= 2025
 
   /**
-    For direct register read/write
+  The register access used to talk to the chip.
 
-    Use it, if the library does not implement a function.
-    In that case you may also consider $set-value-with-mask
+  Use it directly if the library does not implement a function.
+  In that case you may also consider $set-value-with-mask.
   */
-  registers/serial.Registers? := null
+  registers/serial.Registers := ?
 
   /**
   The I2C bus.
 
   Null, if not allocated by this class.
-  Kept public in case you want to use another i2c device
-  for example the AT24C32 EEPROM (on the blue DS3231 boards)
+  Kept public in case you want to use another i2c device on the same bus,
+    for example the AT24C32 EEPROM (on the blue DS3231 boards).
   */
   bus/i2c.Bus? := null
-  /** The sda-pin. Null, if not allocated by this class. */
-  sda_/gpio.Pin? := null
-  /** The scl-pin. Null, if not allocated by this class. */
-  scl_/gpio.Pin? := null
   /** The vcc pin, if specified. */
   vcc_/gpio.Pin? := null
   /** The gnd pin, if specified. */
   gnd_/gpio.Pin? := null
 
   /**
-  Creates a Ds3231 instance, given a serial.Device object
+  Creates a Ds3231 instance, given a $serial.Device object.
   */
-  constructor device/serial.Device :
+  constructor device/serial.Device:
     registers = device.registers
 
   /**
   Variant of $(constructor device).
 
-  Convenience function to build an i2s bus/device during construction.
+  Convenience function to build an i2c bus and device during construction. The
+    $sda and $scl are GPIO numbers.
 
   If given, $vcc/$gnd are initialized as output pins with the corresponding levels.
     This simplifies the Ds3231 cabling, and allows to save power when the ESP32 goes
@@ -72,48 +78,40 @@ class Ds3231:
       --sda/int
       --scl/int
       --vcc/int? = null
-      --gnd/int? = null :
+      --gnd/int? = null:
+    local-bus/i2c.Bus? := null
+    device/i2c.Device? := null
     try:
-      /** will become true if vcc or gnd are GPIO pins */
-      gpio-power := false
-      /** The vcc and gnd are the first to configure,
-      to allow the module to power up and communicate with i2c. */
+      // The vcc and gnd are the first to configure, to allow the module to
+      // power up and communicate with i2c.
       if vcc and vcc >= 0:
         vcc_ = gpio.Pin vcc --output
         vcc_.set 1
-        gpio-power = true
       if gnd and gnd >= 0:
         gnd_ = gpio.Pin gnd --output
         gnd_.set 0
-        gpio-power = true
-      if gpio-power:
-        // Gives some time for the DS3231 to power up. Not sure is needed.
+      if vcc_ or gnd_:
+        // Give the DS3231 some time to power up.
         sleep --ms=5
-      sda_ = gpio.Pin sda
-      scl_ = gpio.Pin scl
-      bus = i2c.Bus --sda=sda_ --scl=scl_
-      device := bus.device I2C-ADDRESS
-      registers = device.registers
-
+      local-bus = i2c.Bus --sda=sda --scl=scl
+      device = local-bus.device I2C-ADDRESS
     finally: | is-exception _ |
       if is-exception:
-        if bus: bus.close
-        if sda_: sda_.close
-        if scl_: scl_.close
+        if local-bus: local-bus.close
         if vcc_: vcc_.close
         if gnd_: gnd_.close
+    bus = local-bus
+    registers = device.registers
 
-  /** Closes this driver. */
+  /**
+  Closes this driver.
+
+  Releases the bus and pins that this driver allocated itself.
+  */
   close -> none:
     if bus:
       bus.close
       bus = null
-    if sda_:
-      sda_.close
-      sda_ = null
-    if scl_:
-      scl_.close
-      scl_ = null
     if vcc_:
       vcc_.close
       vcc_ = null
@@ -127,72 +125,84 @@ class Ds3231:
   If $wait-sec-change is false the function returns immediately but can have a time
     error of up to 1 second.
   If $wait-sec-change is true (the default), this function can block up to 1 sec but
-    the adjustment is accurate to about 1 ms.
+    the adjustment is accurate to about 1 ms. It throws "DS3231_NOT_TICKING" if the
+    seconds do not change, which happens when the oscillator has stopped.
+  Throws "DS3231_TIME_IS_INVALID" if the chip time is earlier than the year 2025,
+    unless $allow-wrong-time is set. See $oscillator-stopped to find out if the
+    chip has lost its time.
   */
   get -> Duration
       --wait-sec-change/bool = true
       --allow-wrong-time/bool = false:
-    tstart := Time.now
-    rtctime/Time? := null
     if wait-sec-change:
+      start-us := Time.monotonic-us
       v := registers.read-u8 REG-START_
       while true:
         yield
         v1 := registers.read-u8 REG-START_
-        if v != v1:
-          break
-    /** The time is read just when the seconds register (address 0x00)
-    goes to the next second. */
-    rtctime = this.get_
+        if v != v1: break
+        if Time.monotonic-us - start-us > 1_500_000: throw "DS3231_NOT_TICKING"
+    // The time is read just when the seconds register (address 0x00)
+    // goes to the next second.
+    rtctime := get_
     adjustment := Time.now.to rtctime
-    if not allow-wrong-time and rtctime.utc.year < 2025:
+    if not allow-wrong-time and rtctime.utc.year < MIN-VALID-YEAR_:
       throw "DS3231_TIME_IS_INVALID"
     return adjustment
 
   /**
-  Sets the RTC time to Time.now+adjustment.
+  Sets the RTC time to Time.now+$adjustment.
 
-  See $get for the meaning of $wait-sec-change and $allow-wrong-time.
+  See $get for the meaning of $wait-sec-change and $allow-wrong-time. Setting the
+    time does not clear the oscillator stopped flag. See $clear-oscillator-stopped.
   */
   set adjustment/Duration
       --wait-sec-change/bool=true
-      --allow-wrong-time/bool=false -> none :
-    adjustment += (Duration --us=2750) // We compensate for the i2c and MCU delays.
-    if not allow-wrong-time and (Time.now + adjustment).utc.year < 2025:
+      --allow-wrong-time/bool=false -> none:
+    adjustment += (Duration --us=2750)  // We compensate for the i2c and MCU delays.
+    if not allow-wrong-time and (Time.now + adjustment).utc.year < MIN-VALID-YEAR_:
       throw "YEAR_LESS_THAN_2025"
-    t := Time.now + adjustment
-    if wait-sec-change: // Wait until the second changes (for better accuracy).
-      s := t.utc.s
+    if wait-sec-change:  // Wait until the second changes (for better accuracy).
+      s := (Time.now + adjustment).utc.s
       while true:
-        yield // allow other tasks to run
-        t = Time.now + adjustment
-        s1 := t.utc.s
-        if s != s1: break
+        yield  // Allow other tasks to run.
+        if (Time.now + adjustment).utc.s != s: break
     set_ (Time.now + adjustment)
 
   get_ -> Time:
     buffer := registers.read-bytes REG-START_ REG-NUM_
-    t := []
-    buffer.do:
-      t.add (bcd2int_ it)
-    utc := Time.utc --s=t[0] --m=t[1] --h=t[2] --day=t[4] --month=t[5] --year=(2000 + t[6])
-    return utc
+    hour-byte := buffer[2]
+    hour/int := ?
+    if (hour-byte & 0b0100_0000) != 0:  // 12-hour mode.
+      hour = (bcd2int_ (hour-byte & 0x1F)) % 12
+      if (hour-byte & 0b0010_0000) != 0: hour += 12
+    else:
+      hour = bcd2int_ (hour-byte & 0x3F)
+    // Bit 7 of the month register is the century bit.
+    century := (buffer[5] & 0x80) != 0 ? 100 : 0
+    return Time.utc
+        --s=(bcd2int_ buffer[0])
+        --m=(bcd2int_ buffer[1])
+        --h=hour
+        --day=(bcd2int_ buffer[4])
+        --month=(bcd2int_ (buffer[5] & 0x1F))
+        --year=(2000 + century + (bcd2int_ buffer[6]))
 
-  set_ tm/Time -> none :
+  set_ tm/Time -> none:
     u := tm.utc
     // Must be 7 fields, the same as the Ds3231 time keeping registers.
     t := [u.s, u.m, u.h, u.weekday, u.day, u.month, (u.year - 2000)]
     buffer := ByteArray REG-NUM_: int2bcd_ t[it]
-    /** We write a byte to reset the countdown timer.
-    Without this a full second(1000ms) error often happens */
-    registers.write-u8 REG-START_ 0 // resets the countdown timer, any value is OK
-    registers.write-bytes REG-START_ buffer // writes the time
+    // Writing the seconds register resets the divider chain.
+    // Without this a full second (1000ms) error often happens.
+    registers.write-u8 REG-START_ 0
+    registers.write-bytes REG-START_ buffer  // Writes the time.
 
   /**
   Sets the aging offset.
 
-  run the "offset-calulator.toit" app to calculate it.
-  More info on the README
+  Run the "offset-calculator.toit" app to calculate it.
+  More info in the README.
   The new value will work after the next temp conversion.
   The $offset must satisfy -128 <= $offset <= 127.
   */
@@ -204,18 +214,23 @@ class Ds3231:
   Reads the aging offset from the chip.
 
   When first powered it has the value of 0, but if set to a
-  different value, it can retain this value as long as it is powered
-  or battery backed. */
-  get-aging-offset -> int: // useful with "offset-calulator.toit"
+    different value, it can retain this value as long as it is powered
+    or battery backed.
+  Useful with "offset-calculator.toit".
+  */
+  get-aging-offset -> int:
     return registers.read-i8 REG-AGING_
 
-  /** internal function, calls $set-value-with-mask with specific
-  register and mask */
-  set-sqw_ value -> none:
+  /**
+  Sets the frequency bits (and the INTCN bit) of the control register.
+
+  Calls $set-value-with-mask with the right register and mask.
+  */
+  set-sqw_ value/int -> none:
     set-value-with-mask
-      --register=0x0e
-      --mask=0b000_111_00
-      --value=value
+        --register=REG-CONTROL_
+        --mask=SQW-MASK_
+        --value=value
 
   /**
   Sets some bits of the given $register.
@@ -228,222 +243,212 @@ class Ds3231:
   set-value-with-mask --register/int --mask/int --value/int -> none:
     if not ((0 <= register <= 0x12) and (0 <= mask <= 255) and (0 <= value <= 255)):
       throw "PARAMETER_OUT_OF_BOUNDS"
-    new-value/int := value
     old-value/int := registers.read-u8 register
-    value-to-apply/int := (old-value & ~mask) | (new-value & mask)
-    registers.write-u8 register value-to-apply
+    registers.write-u8 register ((old-value & ~mask) | (value & mask))
 
-  /** Equivalent with $enable-sqw-output --frequency=1 */
-  enable-sqw-1hz -> none :
-    set-sqw_ 0b000_000_00 // RS2->0 RS1->0 INTCN->0
+  /** Equivalent with $enable-sqw-output --frequency=1. */
+  enable-sqw-1hz -> none:
+    enable-sqw-output --frequency=1
 
-
-  /** Equivalent with $enable-sqw-output --frequency=1000 */
+  /** Equivalent with $enable-sqw-output --frequency=1000. */
   enable-sqw-1kilohz -> none:
-    set-sqw_ 0b000_010_00
+    enable-sqw-output --frequency=1000
 
-  /** Equivalent with $enable-sqw-output --frequency=4000 */
-  enable-sqw-4kilohz -> none :
-    set-sqw_ 0b000_100_00
+  /** Equivalent with $enable-sqw-output --frequency=4000. */
+  enable-sqw-4kilohz -> none:
+    enable-sqw-output --frequency=4000
 
-  /** Equivalent with $enable-sqw-output --frequency=8000 */
-  enable-sqw-8kilohz -> none :
-    set-sqw_ 0b000_110_00
+  /** Equivalent with $enable-sqw-output --frequency=8000. */
+  enable-sqw-8kilohz -> none:
+    enable-sqw-output --frequency=8000
 
   /**
   Enables the given $frequency on the sqw pin.
 
   The output is open-drain, and it requires pull-up (external or software).
 
-  The $frequency must be one of 1, 1000, 4000, or 8000.
+  The $frequency must be one of 1, 1000, 4000, or 8000. The DS3231 generates
+    1 Hz, 1.024 kHz, 4.096 kHz and 8.192 kHz respectively.
+  This clears the INTCN bit, so the pin no longer signals alarms.
   */
   enable-sqw-output --frequency/int -> none:
-    if frequency == 1: set-sqw_ 0b000_000_00 // RS2->0 RS1->0 INTCN->0.
-    else if frequency == 1000: set-sqw_ 0b000_010_00
-    else if frequency == 4000: set-sqw_ 0b000_100_00
-    else if frequency == 8000: set-sqw_ 0b000_110_00
+    if frequency == 1: set-sqw_ 0b000_00_000  // RS2->0 RS1->0 INTCN->0.
+    else if frequency == 1000: set-sqw_ 0b000_01_000
+    else if frequency == 4000: set-sqw_ 0b000_10_000
+    else if frequency == 8000: set-sqw_ 0b000_11_000
     else: throw "INVALID_FREQUENCY"
 
-  /** Disables the output on the sqw pin. */
-  disable-sqw -> none :
-    set-sqw_ 0b000_111_00
+  /**
+  Disables the square wave output on the sqw pin.
+
+  Sets the INTCN bit, so the pin only signals alarms that are enabled
+    with $enable-alarm.
+  */
+  disable-sqw -> none:
+    set-sqw_ 0b000_11_100
 
   /**
   Enables the battery-backed sqw.
+
+  The square wave is then also generated when the chip runs from the battery.
   */
-  enable-battery-backed-sqw -> none :
-    set-value-with-mask --register=0x0e --value=0b0_1_000000 --mask=0x0_1_000000
+  enable-battery-backed-sqw -> none:
+    set-value-with-mask --register=REG-CONTROL_ --mask=BBSQW-BIT_ --value=BBSQW-BIT_
 
   /**
   Disables the battery-backed sqw.
+
   This is the default DS3231 setting.
   */
-  disable-battery-backed-sqw -> none :
-    set-value-with-mask --register=0x0e --value=0b0_0_000000 --mask=0x0_1_000000
-
-  /** Returns the temperature in celsius.
-
-  The value seems to have 0.25°C accuracy but in fact it can have
-  up to 3 degrees error. However with the decimals you can find
-  if the temp is going up or down. Tested and working correctly
-  with both positive and negative values.
-  */
-  get-temperature -> float :
-    /** (4*temp) is stored as 10-bit 2-complement number
-    buf[0] the sign + 7 most significant bits
-    buf[1] bits 7 and 8 represent the decimal part
-    the other bits are ignored */
-    buf ::= registers.read-bytes REG-TEMPERATURE_ 2
-    temp := (buf[0]<<2) | (buf[1]>>6)
-    // the temp (32bit integer) now contains the 10-bit value
-    if (temp & (1<<9))!=0: // if the 10-bit number is negative
-      temp -= (1<<10) // remove 1024
-    // else the number is positive and we leave it as is.
-    //
-    // at this point temp only needs to be divided by 4
-    return temp.to-float/4
-
-  /** Forces a temperature conversion. Returns when the operation is
-  finished. Usually not needed (happens automatically every 64sec),
-  only if you use your DS3231 as a thermometer ! */
-  force-temp-conversion -> none:
-    CONV ::= (1<<5) // in Control Register
-    BSY ::= (1<<2) // in Status Register
-    if ((registers.read-u8 REG-STATUS_) & BSY) !=0 : // already in temp conversion mode
-      15.repeat:
-        if ((registers.read-u8 REG-STATUS_) & BSY) == 0:
-          return
-        else:
-          sleep --ms=10
-          // print "BSY"
-      throw "TIMEOUT_WAITING_BSY"
-    else: // Not BSY flag, we can initiate a Temp Conversion
-      // set the CONV bit to 1
-      set-value-with-mask --register=REG-CONTROL_ --mask=CONV --value=CONV
-      15.repeat:
-        if ((registers.read-u8 REG-CONTROL_) & CONV)==0:
-          return
-        else:
-          sleep --ms=10
-          //print "CONV"
-      throw "TIMEOUT_WAITING_CONV"
-
+  disable-battery-backed-sqw -> none:
+    set-value-with-mask --register=REG-CONTROL_ --mask=BBSQW-BIT_ --value=0
 
   /**
-  Returns the expected drift. A Time object must be given
+  Returns the temperature in celsius.
 
-  The drift is calculated by assuming a 2ppm error (unless you set a different)
-  since the last time the clock is set. The drift is usually smaller, and in some
-  cases (high temperature deviations) can be greater. With the aging offset calibrated
-  and not very high temperature deviations, this can be significantly lower.
+  The value has a resolution of 0.25°C, but the datasheet accuracy is
+    only ±3°C. With the decimals you can find if the temp is going up or down.
   */
-  expected-drift --from-time/Time --ppm/num=2 -> Duration?:
-    ppm = ppm * 1.0 // to be sure is float
-    t/Time := Time.now
-    //if not last-set-time_: return null
-    return (from-time.to t) * ppm / 1e6
+  get-temperature -> float:
+    // (4*temp) is stored as 10-bit 2-complement number.
+    // buf[0] the sign + 7 most significant bits.
+    // buf[1] bits 7 and 6 represent the decimal part, the other bits are ignored.
+    buf := registers.read-bytes REG-TEMPERATURE_ 2
+    temp := (buf[0] << 2) | (buf[1] >> 6)
+    if (temp & (1 << 9)) != 0:  // The 10-bit number is negative.
+      temp -= (1 << 10)
+    return temp / 4.0
 
-  /** seconds minutes hours etc. are stored in the DS3231 registers as BCD. */
+  /**
+  Forces a temperature conversion.
+
+  Returns when the operation is finished. Usually not needed (happens
+    automatically every 64sec), only if you use your DS3231 as a thermometer.
+  Throws "TIMEOUT_WAITING_CONV" if the conversion does not finish within 300 ms.
+  */
+  force-temp-conversion -> none:
+    // A conversion that is already running is waited for, instead of restarted.
+    if ((registers.read-u8 REG-STATUS_) & BSY-BIT_) == 0:
+      set-value-with-mask --register=REG-CONTROL_ --mask=CONV-BIT_ --value=CONV-BIT_
+    30.repeat:
+      busy := (registers.read-u8 REG-STATUS_) & BSY-BIT_
+      converting := (registers.read-u8 REG-CONTROL_) & CONV-BIT_
+      if busy == 0 and converting == 0: return
+      sleep --ms=10
+    throw "TIMEOUT_WAITING_CONV"
+
+  /**
+  Returns the expected drift since the given $from-time.
+
+  The drift is calculated by assuming a 2ppm error (unless you set a different $ppm)
+    since the last time the clock is set. The drift is usually smaller, and in some
+    cases (high temperature deviations) can be greater. With the aging offset calibrated
+    and not very high temperature deviations, this can be significantly lower.
+  */
+  expected-drift --from-time/Time --ppm/num=2 -> Duration:
+    return (from-time.to Time.now) * (ppm / 1e6)
+
+  /** Seconds, minutes, hours etc. are stored in the DS3231 registers as BCD. */
   static int2bcd_ x/int -> int:
     return (x / 10) * 16 + (x % 10)
 
   static bcd2int_ x/int -> int:
     return (x / 16) * 10 + (x % 16)
 
-
   /**
   Returns true if the oscillator has stopped since the flag was last cleared.
 
-  This flag is set when the oscillator stops or was stopped — including when the
+  This flag is set when the oscillator stops or was stopped, including when the
     coin cell was insufficient to maintain operation during a power loss. It is
     only cleared by calling $clear-oscillator-stopped.
 
-  Check this on boot to determine whether the RTC time is still valid.  If true,
+  Check this on boot to determine whether the RTC time is still valid. If true,
     the time should be considered invalid and resynced from NTP or another
     source.
   */
   oscillator-stopped -> bool:
-    return (registers.read-u8 REG-STATUS_) & 0x80 != 0
+    return ((registers.read-u8 REG-STATUS_) & OSF-BIT_) != 0
 
   /**
   Clears the oscillator stopped flag.
 
-  Call this after handling a stopped-oscillator condition — typically after
+  Call this after handling a stopped-oscillator condition, typically after
     resyncing the time from NTP or another source. If not cleared,
     $oscillator-stopped will continue to return true even after the oscillator
     has been running normally.
   */
   clear-oscillator-stopped -> none:
-    set-value-with-mask --register=REG-STATUS_ --mask=0x80 --value=0x00
+    set-value-with-mask --register=REG-STATUS_ --mask=OSF-BIT_ --value=0
 
   /**
-  Enables or disables either of the hardware alarms.
+  Enables or disables the hardware alarm $alarm-num (1 or 2) depending on $on.
+
+  Alarm interrupts are only signaled on the sqw pin when $set-sqw-as-interrupt
+    is enabled.
   */
   enable-alarm alarm-num/int on/bool -> none:
-    assert: 1 <= alarm-num <= 2
-    mask := alarm-num == 1 ? ALARM-1-ENABLE_ : ALARM-2-ENABLE_
-    control-reg := registers.read-u8 REG-CONTROL_
-    control-reg = on ? (control-reg | mask) : (control-reg & ~mask)
-    registers.write-u8 REG-CONTROL_ control-reg
+    mask := alarm-bit_ alarm-num
+    set-value-with-mask --register=REG-CONTROL_ --mask=mask --value=(on ? mask : 0)
 
   /**
-  Sets SQW pin as Interrupt for alarms.
+  Sets the sqw pin as interrupt for alarms, if $on is true.
+
+  When false, the pin outputs the square wave configured with $enable-sqw-output.
   */
   set-sqw-as-interrupt on/bool -> none:
-    control-reg := registers.read-u8 REG-CONTROL_
-    control-reg = on ? (control-reg | INTCN-BIT_) : (control-reg & ~INTCN-BIT_)
-    registers.write-u8 REG-CONTROL_ control-reg
+    set-value-with-mask --register=REG-CONTROL_ --mask=INTCN-BIT_ --value=(on ? INTCN-BIT_ : 0)
 
   /**
-  Gets one of the two hardware alarms.  Returns an `AlarmSpec`.
+  Gets the hardware alarm $alarm-num (1 or 2) as an $AlarmSpec.
   */
   get-alarm alarm-num/int -> AlarmSpec:
-    assert: 1 <= alarm-num <= 2
+    alarm-bit_ alarm-num
     if alarm-num == 1:
       return AlarmSpec.from-byte-array (registers.read-bytes REG-ALARM-1-START_ 4)
-    else:
-      return AlarmSpec.from-byte-array (registers.read-bytes REG-ALARM-2-START_ 3)
+    return AlarmSpec.from-byte-array (registers.read-bytes REG-ALARM-2-START_ 3)
 
   /**
-  Sets one of the two hardware alarms.  Requires an `AlarmSpec`.
+  Sets the hardware alarm $alarm-num (1 or 2) from the given $alarm.
+
+  Alarm 2 has no seconds. The seconds of the $alarm are ignored for alarm 2, and
+    the alarm triggers when the seconds of the time are 00.
   */
   set-alarm alarm-num/int alarm/AlarmSpec -> none:
-    assert: 1 <= alarm-num <= 2
-    // See if Register 0x03h is 00.  If so, and alarm.is-weekly is true,
-    // alarm will never trigger.
-
-    // Set the alarm:
+    alarm-bit_ alarm-num
     if alarm-num == 1:
       registers.write-bytes REG-ALARM-1-START_ alarm.to-byte-array
     else:
-      if alarm.must-seconds-match:
-        // Maybe this could send a log, dump the seconds byte, and save it anyway,
-        // but maybe we'd risk weird outcomes like the alarm going every minute?
-        print "Alarm 2 can not react to seconds set on an alarm."
       registers.write-bytes REG-ALARM-2-START_ alarm.to-byte-array[1..]
 
   /**
-  Whether an alarm has been triggered.
+  Whether the alarm $alarm-num (1 or 2) has been triggered.
   */
   is-alarm-triggered alarm-num/int -> bool:
-    assert: 1 <= alarm-num <= 2
-    mask := alarm-num == 1 ? ALARM-1-ENABLE_ : ALARM-2-ENABLE_
-    status := registers.read-u8 REG-STATUS_
-    return (status & mask) != 0
+    mask := alarm-bit_ alarm-num
+    return ((registers.read-u8 REG-STATUS_) & mask) != 0
 
   /**
-  Clears a raised alarm.
+  Clears the raised alarm $alarm-num (1 or 2).
 
-  Alarms must be cleared in Software.
+  Alarms must be cleared in software.
   */
   clear-alarm alarm-num/int -> none:
-    assert: 1 <= alarm-num <= 2
-    mask := alarm-num == 1 ? ALARM-1-ENABLE_ : ALARM-2-ENABLE_
-    status-reg := registers.read-u8 REG-STATUS_
-    status-reg = status-reg & ~mask
-    registers.write-u8 REG-STATUS_ status-reg
+    mask := alarm-bit_ alarm-num
+    set-value-with-mask --register=REG-STATUS_ --mask=mask --value=0
+
+  /** Returns the status and control register bit of the alarm $alarm-num. */
+  alarm-bit_ alarm-num/int -> int:
+    if alarm-num == 1: return ALARM-1-BIT_
+    if alarm-num == 2: return ALARM-2-BIT_
+    throw "INVALID_ALARM_NUMBER"
 
 
+/**
+The settings of a hardware alarm of the $Ds3231.
+
+Each of the second, minute, hour and day is either matched or ignored. The
+  object is immutable. Use $with to derive a changed copy.
+*/
 class AlarmSpec:
   static SECONDS-BYTE_ ::= 0
   static MINUTES-BYTE_ ::= 1
@@ -451,7 +456,7 @@ class AlarmSpec:
   static DAY-BYTE_ ::= 3
   static DEFAULT-ARRAY_ ::= #[0x80, 0x80, 0x80, 0x80]
 
-  //In accordance with ISO 8601, the week starts with Monday having the value 1.
+  // In accordance with ISO 8601, the week starts with Monday having the value 1.
   static UNSET ::= 0
   static MONDAY ::= 1
   static TUESDAY ::= 2
@@ -461,20 +466,24 @@ class AlarmSpec:
   static SATURDAY ::= 6
   static SUNDAY ::= 7
   static DAYS_ ::= {
-    UNSET : "UNSET",
-    MONDAY : "Monday",
-    TUESDAY : "Tuesday",
-    WEDNESDAY : "Wednesday",
-    THURSDAY : "Thursday",
-    FRIDAY : "Friday",
-    SATURDAY : "Saturday",
-    SUNDAY : "Sunday",
+    UNSET: "UNSET",
+    MONDAY: "Monday",
+    TUESDAY: "Tuesday",
+    WEDNESDAY: "Wednesday",
+    THURSDAY: "Thursday",
+    FRIDAY: "Friday",
+    SATURDAY: "Saturday",
+    SUNDAY: "Sunday",
   }
 
   payload_/ByteArray := ?
 
   /**
   Creates an object from manually supplied data.
+
+  Fields that are not given are ignored when matching the alarm. The $day is the
+    day of the week (1 is Monday) if $weekly is true, or the day of the month
+    otherwise. The $day and $weekly must be given together.
   */
   constructor
       --hour/int?=null
@@ -482,27 +491,16 @@ class AlarmSpec:
       --second/int?=null
       --day/int?=null
       --weekly/bool?=null:
-    if weekly != null:
-      if weekly == true: assert: 1 <= day <= 7
-      else: assert: 1 <= day <= 31
-    if hour: assert: 0 <= hour <= 23
-    if minute: assert: 0 <= minute <= 59
-    if second: assert:  0 <= second <= 59
+    check-range_ hour 0 23
+    check-range_ minute 0 59
+    check-range_ second 0 59
+    if (day == null) != (weekly == null): throw "DAY_AND_WEEKLY_REQUIRED_TOGETHER"
+    if weekly != null: check-range_ day 1 (weekly ? 7 : 31)
 
     payload_ = DEFAULT-ARRAY_.copy
-
-    if second:
-      payload_[SECONDS-BYTE_] = (payload_[SECONDS-BYTE_] & 0x80) | (encode-field_ second)
-      payload_[SECONDS-BYTE_] = set-must-match_ payload_[SECONDS-BYTE_] --set=true
-
-    if minute:
-      payload_[MINUTES-BYTE_] = (payload_[MINUTES-BYTE_] & 0x80) | (encode-field_ minute)
-      payload_[MINUTES-BYTE_] = set-must-match_ payload_[MINUTES-BYTE_] --set=true
-
-    if hour:
-      payload_[HOURS-BYTE_] = (payload_[HOURS-BYTE_] & 0x80) | (encode-field_ hour)
-      payload_[HOURS-BYTE_] = set-must-match_ payload_[HOURS-BYTE_] --set=true
-
+    if second: payload_[SECONDS-BYTE_] = encode-field_ second
+    if minute: payload_[MINUTES-BYTE_] = encode-field_ minute
+    if hour: payload_[HOURS-BYTE_] = encode-field_ hour
     if weekly != null:
       if weekly:
         payload_[DAY-BYTE_] = encode-day-field_ --day-of-week=day
@@ -511,59 +509,71 @@ class AlarmSpec:
 
   /**
   Creates an object from register data.
+
+  The $bytes are the 4 registers of alarm 1, or the 3 registers of alarm 2. Fields
+    that contain invalid data are ignored when matching the alarm.
   */
   constructor.from-byte-array bytes/ByteArray:
-    assert: (bytes.size == 3) or (bytes.size == 4)
     if bytes.size == 4:
-      payload_ = bytes
+      payload_ = bytes.copy
+    else if bytes.size == 3:
+      payload_ = #[0x80] + bytes
     else:
-      payload_ = DEFAULT-ARRAY_[0..1].copy
-      payload_ += bytes
+      throw "INVALID_ARGUMENT"
+    sanitize_
 
-    // Check for byte corruption.  If weird, assume whole byte needs setting
-    // to default.
+  constructor.from-payload_ .payload_:
+
+  /** Resets the fields that hold nonsensical data to 'ignored'. */
+  sanitize_ -> none:
     if not (0 <= second <= 59): payload_[SECONDS-BYTE_] = 0x80
     if not (0 <= minute <= 59): payload_[MINUTES-BYTE_] = 0x80
-    if not (0 <= hour <= 23): payload_[HOURS-BYTE_] = 0x80
-    if is-weekly:
-      if not (1 <= day <= 7):
-        payload_[DAY-BYTE_] = encode-day-field_ --day-of-week=0
-        set-must-match_ payload_[DAY-BYTE_] --set=false
-    else:
-      if not (0 <= day <= 31):
-        payload_[DAY-BYTE_] = encode-day-field_ --day-of-week=0
-        set-must-match_ payload_[DAY-BYTE_] --set=false
+    // Bit 6 of the hours byte selects the 12-hour mode, which this class does not use.
+    if not (0 <= hour <= 23) or (payload_[HOURS-BYTE_] & 0x40) != 0:
+      payload_[HOURS-BYTE_] = 0x80
+    if must-day-match and not (1 <= day <= (is-weekly ? 7 : 31)):
+      payload_[DAY-BYTE_] = 0x80
 
+  /** Whether the seconds must match for the alarm to trigger. */
   must-seconds-match -> bool:
     return (payload_[SECONDS-BYTE_] & 0x80) == 0
 
+  /** Whether the byte $byte (0 to 3, from seconds to day) must match. */
   must-match byte/int -> bool:
-    assert: 0 <= byte <= 3
+    if not 0 <= byte <= 3: throw "INVALID_ARGUMENT"
     return (payload_[byte] & 0x80) == 0
 
+  /** Returns the register data of this alarm. */
   to-byte-array -> ByteArray:
-    return payload_ //.copy
+    return payload_.copy
 
+  /** Whether the day must match for the alarm to trigger. */
   must-day-match -> bool:
     return (payload_[DAY-BYTE_] & 0b1000_0000) == 0
 
+  /** Whether the day is a day of the week. */
   is-weekly -> bool:
     return (payload_[DAY-BYTE_] & 0b0100_0000) != 0
 
+  /** Whether the day is a day of the month. */
   is-monthly -> bool:
     return (payload_[DAY-BYTE_] & 0b0100_0000) == 0
 
+  /** The day of the week (1 is Monday) or of the month. */
   day -> int:
-    return bcd72int (payload_[DAY-BYTE_] & 0x3F)
+    return bcd72int_ (payload_[DAY-BYTE_] & 0x3F)
 
+  /** The hour in 24-hour format. */
   hour -> int:
-    return bcd72int (payload_[HOURS-BYTE_] & 0x7F)
+    return bcd72int_ (payload_[HOURS-BYTE_] & 0x3F)
 
+  /** The minute. */
   minute -> int:
-    return bcd72int (payload_[MINUTES-BYTE_] & 0x7F)
+    return bcd72int_ (payload_[MINUTES-BYTE_] & 0x7F)
 
+  /** The second. */
   second -> int:
-    return bcd72int (payload_[SECONDS-BYTE_] & 0x7F)
+    return bcd72int_ (payload_[SECONDS-BYTE_] & 0x7F)
 
   stringify --debug/bool=false -> string:
     if debug: return "$payload_"
@@ -589,8 +599,9 @@ class AlarmSpec:
       return "daily at $hour-str:$min-str:$sec-str"
 
     day-type := is-weekly ? "weekly" : "monthly"
-    day-str := (must-match DAY-BYTE_) ? "$(%02d day)" : "*"
-    day-display := is-weekly ? DAYS_[day] : day-str
+    day-str := match-day ? "$(%02d day)" : "*"
+    day-display := day-str
+    if match-day and is-weekly: day-display = DAYS_.get day --if-absent=: day-str
     if match-day:
       return "$day-type on day $day-display at $hour-str:$min-str:$sec-str"
 
@@ -598,90 +609,96 @@ class AlarmSpec:
 
   /**
   Creates a copy of the object with supplied properties changed.
+
+  Properties that are not given keep their value, including being ignored. To
+    change the $day of an alarm that ignores the day, $weekly must be given too.
   */
   with -> AlarmSpec
       --hour/int?=null
       --minute/int?=null
       --second/int?=null
       --day/int?=null
-      --weekly/int?=null:
+      --weekly/bool?=null:
+    check-range_ hour 0 23
+    check-range_ minute 0 59
+    check-range_ second 0 59
+    result := AlarmSpec.from-payload_ payload_.copy
+    if second: result.payload_[SECONDS-BYTE_] = encode-field_ second
+    if minute: result.payload_[MINUTES-BYTE_] = encode-field_ minute
+    if hour: result.payload_[HOURS-BYTE_] = encode-field_ hour
+    if day != null or weekly != null:
+      new-weekly := (weekly == null) ? is-weekly : weekly
+      if day == null and not must-day-match: throw "DAY_REQUIRED"
+      new-day := (day == null) ? this.day : day
+      check-range_ new-day 1 (new-weekly ? 7 : 31)
+      if new-weekly:
+        result.payload_[DAY-BYTE_] = encode-day-field_ --day-of-week=new-day
+      else:
+        result.payload_[DAY-BYTE_] = encode-day-field_ --day-of-month=new-day
+    return result
 
-    return AlarmSpec
-        --hour=(hour or this.hour)
-        --minute=(minute or this.minute)
-        --second=(second or this.second)
-        --day=(day or this.day)
-        --weekly=(weekly or this.is-weekly)
+  static check-range_ value/int? low/int high/int -> none:
+    if value != null and not low <= value <= high: throw "INVALID_ARGUMENT"
 
-  static encode-field_ value/int? -> int:
-    if value == null: return 0x80
-    return int2bcd7 value
+  static encode-field_ value/int -> int:
+    return int2bcd7_ value
 
   static encode-day-field_ --day-of-month/int?=null --day-of-week/int?=null -> int:
     // If neither is provided, wildcard the day.
-    if not day-of-month and not day-of-week:
+    if day-of-month == null and day-of-week == null:
       return 0x80
 
     if day-of-month != null:
-      // DY/DT = 0, must match => bit7=0
-      v := int2bcd7 day-of-month
-      return (v & 0x3F)  // ensure bits 6-7 are clear
+      // DY/DT = 0, must match => bit7=0.
+      return int2bcd7_ day-of-month
 
-    // day-of-week != null:
-    v := int2bcd7 day-of-week
-    return 0x40 | (v & 0x3F)  // DY/DT=1
+    // DY/DT = 1.
+    return 0x40 | (int2bcd7_ day-of-week)
 
-  static set-must-match_ value/int --set/bool -> int:
-    if set: return value & 0b0111_1111
-    return value | 0b1000_0000
-
-  static int2bcd7 x/int -> int:
-    //return ((x / 10) << 4) | (x % 10)
+  static int2bcd7_ x/int -> int:
     return (((x / 10) << 4) | (x % 10)) & 0x7F
 
-  static bcd72int x/int -> int:
+  static bcd72int_ x/int -> int:
     return ((x >> 4) * 10) + (x & 0x0F)
 
   /**
-  Shortcut returning an Alarmspec for an alarm every second.
+  Shortcut returning an $AlarmSpec for an alarm every second.
   */
-  static every-second:
+  static every-second -> AlarmSpec:
     return AlarmSpec.from-byte-array DEFAULT-ARRAY_
 
   /**
-  Shortcut returning an Alarmspec for an alarm every minute.
+  Shortcut returning an $AlarmSpec for an alarm every minute.
 
-  Note: Alarm 2 can’t match seconds.  Alarms when seconds reach $seconds for
+  Note: Alarm 2 can't match seconds. Alarms when seconds reach $seconds for
     Alarm 1, or when seconds=00 for Alarm 2.
   */
-  static every-minute --seconds/int=0:
+  static every-minute --seconds/int=0 -> AlarmSpec:
     return AlarmSpec --second=seconds
 
   /**
-  Shortcut returning an Alarmspec for an alarm hourly.
+  Shortcut returning an $AlarmSpec for an alarm hourly.
 
-  Alarm will trigger when minutes and seconds match.  Will trigger on the hour
+  Alarm will trigger when minutes and seconds match. Will trigger on the hour
     if both are set to 00.
   */
-  static every-hour --second/int=0 --minute/int=0:
+  static every-hour --second/int=0 --minute/int=0 -> AlarmSpec:
     return AlarmSpec --minute=minute --second=second
 
   /**
-  Shortcut returning an Alarmspec for an alarm daily.
+  Shortcut returning an $AlarmSpec for an alarm daily.
   */
-  static every-day --second/int=0 --minute/int=0 --hour/int=0:
+  static every-day --second/int=0 --minute/int=0 --hour/int=0 -> AlarmSpec:
     return AlarmSpec --hour=hour --minute=minute --second=second
 
   /**
-  Shortcut returning an Alarmspec for an alarm weekly.
+  Shortcut returning an $AlarmSpec for an alarm weekly.
   */
-  static weekly --day-of-week/int --hour/int=0 --minute/int=0 --second/int=0:
-    assert: 1 <= day-of-week <= 7
-    return AlarmSpec --day=day-of-week --weekly=true --hour=hour --minute=minute --second=second
+  static weekly --day-of-week/int --hour/int=0 --minute/int=0 --second/int=0 -> AlarmSpec:
+    return AlarmSpec --day=day-of-week --weekly --hour=hour --minute=minute --second=second
 
   /**
-  Shortcut returning an Alarmspec for an alarm monthly.
+  Shortcut returning an $AlarmSpec for an alarm monthly.
   */
-  static monthly --day-of-month/int --hour/int=0 --minute/int=0 --second/int=0:
-    assert: 1 <= day-of-month <= 31
-    return AlarmSpec --day=day-of-month --weekly=false --hour=hour --minute=minute --second=second
+  static monthly --day-of-month/int --hour/int=0 --minute/int=0 --second/int=0 -> AlarmSpec:
+    return AlarmSpec --day=day-of-month --no-weekly --hour=hour --minute=minute --second=second

@@ -11,7 +11,11 @@ We have an RTC and we wish to see if the oscillator has stopped.  If it has
 
 */
 
-rtc ::= Ds3231 --scl=20 --sda=19   /* esp32-c6 DFrobot Beetle */
+// Wiring for the DFRobot FireBeetle 2 ESP32-C6. See the README for other boards.
+SDA-PIN ::= 19
+SCL-PIN ::= 20
+
+rtc ::= Ds3231 --sda=SDA-PIN --scl=SCL-PIN
 ntp-ready ::= monitor.Latch
 ntp-update-period-success ::= Duration --m=30
 ntp-update-period-fail ::= Duration --s=30
